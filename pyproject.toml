@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aorus-lcd-fw-update"
+dynamic = ["version"]
+description = "Update the Gigabyte AORUS RTX 5090 Master LCD Edge View firmware from Linux, on a working panel"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    # Transport, bootloader protocol and the verified flash plan.
+    "aorus-lcd @ git+https://github.com/c-drew/gigabyte-aorus-lcd-linux@3aa594f361dc8e21be5571303fd94a8cfa06518d",
+    "dnfile",   # `extract`: parse Gigabyte's .NET updater
+]
+keywords = ["gigabyte", "aorus", "lcd", "edge-view", "rtx-5090", "nvidia", "linux", "firmware"]
+
+[project.optional-dependencies]
+verify = ["pefile", "capstone"]
+test = ["pytest"]
+
+[project.scripts]
+aorus-lcd-fw-update = "aorus_lcd_fw_update.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/jfrmorales/aorus-lcd-fw-update"
+
+[tool.setuptools.packages.find]
+include = ["aorus_lcd_fw_update*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "aorus_lcd_fw_update.__version__" }
