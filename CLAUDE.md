@@ -1,7 +1,10 @@
-# aorus-lcd-fw-update
+# aorus-lcd-extras
 
-Complemento de `aorus-lcd` (c-drew/gigabyte-aorus-lcd-linux, pineado por commit en
-`pyproject.toml`) que actualiza el firmware del LCD Edge View con el panel funcionando.
+Complementos de `aorus-lcd` (c-drew/gigabyte-aorus-lcd-linux, pineado por commit en
+`pyproject.toml`): el CLI `aorus-lcd-fw-update`, que actualiza el firmware del LCD Edge View
+con el panel funcionando, y un contenedor para su servicio con panel web. El repo se llamaba
+`aorus-lcd-fw-update` hasta el 07/11/2026; el CLI y el módulo `aorus_lcd_fw_update` conservan
+ese nombre a propósito. El contenedor vive aquí para no depender de que se acepte arriba.
 README en inglés (principal) y `README.es.md`; código en inglés para la comunidad.
 
 Trampas que no hay que deshacer:

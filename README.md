@@ -1,6 +1,15 @@
-# aorus-lcd-fw-update
+# aorus-lcd-extras
 
 **English** · [Español](README.es.md)
+
+Add-ons for [`aorus-lcd`](https://github.com/c-drew/gigabyte-aorus-lcd-linux), which drives the
+**LCD Edge View** side screen from Linux:
+
+- **`aorus-lcd-fw-update`**: update the panel firmware on a working panel (below).
+- **A rootless container** for `aorus-lcd`'s service and web UI, to change what the screen
+  shows ([Run the panel service in a container](#run-the-panel-service-in-a-container)).
+
+## Firmware update
 
 Update the firmware of the **LCD Edge View** side screen on a Gigabyte **AORUS GeForce RTX 5090
 MASTER** from Linux, on a panel that is **working normally**. No Windows, no Gigabyte Control
@@ -88,8 +97,8 @@ Needs Python 3.11+ and the NVIDIA driver (open or proprietary). Access goes thro
 `/dev/nvidiactl`, like the NVIDIA userspace libraries, so no root and no i2c-dev are needed.
 
 ```bash
-git clone https://github.com/jfrmorales/aorus-lcd-fw-update
-cd aorus-lcd-fw-update
+git clone https://github.com/jfrmorales/aorus-lcd-extras
+cd aorus-lcd-extras
 python3 -m venv .venv && .venv/bin/pip install -e .
 ```
 
