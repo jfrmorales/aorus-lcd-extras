@@ -85,6 +85,41 @@ Descarga el actualizador desde la página de soporte de Gigabyte para tu tarjeta
 Firmware → LCD Firmware*). `extract` solo analiza los recursos .NET del ejecutable: no ejecuta
 nada de Gigabyte, y el repositorio no incluye ningún fichero suyo.
 
+## El servicio del panel en un contenedor
+
+`aorus-lcd` incluye además un servicio con interfaz web para cambiar lo que muestra la
+pantalla (logo, imagen, GIF, texto, pantallas de estadísticas de fábrica), el overlay de
+estadísticas de la GPU y el RGB de la tarjeta. Este repositorio puede ejecutarlo en un
+contenedor rootless, servido en `http://127.0.0.1:5090/` y en ningún otro sitio. El flasheo se
+queda en el host: es un comando de un solo uso, y un reinicio del contenedor nunca debe
+cortarlo a medias.
+
+Necesita podman (o docker) y la especificación CDI del NVIDIA Container Toolkit
+(`nvidia-ctk cdi generate`), que aporta los dispositivos de NVIDIA y una `libnvidia-ml` acorde
+con el driver en uso, necesaria para las estadísticas en vivo del overlay.
+
+```bash
+podman build -t localhost/aorus-lcd -f Containerfile .
+podman compose up -d                  # o docker compose; o, sin compose, con Quadlet:
+cp contrib/aorus-lcd.container ~/.config/containers/systemd/
+systemctl --user daemon-reload && systemctl --user start aorus-lcd
+```
+
+Dos ajustes de `compose.yml` y de la unidad Quadlet son obligatorios, no estéticos:
+
+- **`network_mode: host`**. El bloqueo de bus de `aorus-lcd` es un socket Unix abstracto, y
+  esos sockets pertenecen a un namespace de red. Con uno propio, el servicio no vería un
+  `flash` lanzado desde el host y los dos escribirían en el bus a la vez. Con la red del host,
+  además, la interfaz queda en el loopback del host, que es lo que espera la comprobación
+  contra DNS rebinding de `aorus-lcd`.
+- **`label=disable`**. Sin él, SELinux impide al contenedor acceder a los dispositivos de
+  NVIDIA.
+
+Lo que eliges en la interfaz y los ficheros que subes viven en el volumen `aorus-lcd-state`.
+Para partir de un fichero de configuración, móntalo en `/etc/aorus-lcd/config.toml` (está la
+línea comentada). El bloqueo de bus ya separa el flasheo del servicio, pero aun así para el
+servicio antes de flashear: `systemctl --user stop aorus-lcd` o `podman compose down`.
+
 ## Seguridad
 
 - **Antes de borrar nada**, la herramienta comprueba el hash de la imagen, que corresponde a

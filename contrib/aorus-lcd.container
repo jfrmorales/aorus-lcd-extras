@@ -1,0 +1,31 @@
+# Quadlet unit: the aorus-lcd service as a rootless podman container started at login.
+#
+#   podman build -t localhost/aorus-lcd -f Containerfile .
+#   cp contrib/aorus-lcd.container ~/.config/containers/systemd/
+#   systemctl --user daemon-reload && systemctl --user start aorus-lcd
+#   loginctl enable-linger "$USER"     # optional: start at boot, before login
+#
+# Stop it before flashing:  systemctl --user stop aorus-lcd
+[Unit]
+Description=AORUS LCD Edge View service (web UI on 127.0.0.1:5090)
+
+[Container]
+Image=localhost/aorus-lcd:latest
+ContainerName=aorus-lcd
+# Required: aorus-lcd's bus lock is per network namespace.
+Network=host
+AddDevice=nvidia.com/gpu=all
+SecurityLabelDisable=true
+Volume=aorus-lcd-state:/var/lib/aorus-lcd
+HealthCmd=python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:5090/api/status', timeout=4)"
+HealthInterval=60s
+HealthStartPeriod=30s
+# Optional config file; the web UI works without one.
+# Volume=/etc/aorus-lcd/config.toml:/etc/aorus-lcd/config.toml:ro
+
+[Service]
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

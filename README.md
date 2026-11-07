@@ -97,6 +97,37 @@ Get the updater from Gigabyte's support page for your card (*Support → Firmwar
 Firmware*). `extract` only parses the .NET resources; nothing from Gigabyte is executed, and no
 Gigabyte file is included in this repository.
 
+## Run the panel service in a container
+
+`aorus-lcd` also has a service with a web UI to change what the screen shows (logo, image, GIF,
+text, built-in stat screens), the GPU-stats overlay and the card's RGB. This repository can
+run it as a rootless container, served at `http://127.0.0.1:5090/` and nowhere else. Flashing
+stays on the host: it is a one-off command, and a container restart must never cut it short.
+
+Needs podman (or docker) and the NVIDIA Container Toolkit's CDI spec
+(`nvidia-ctk cdi generate`), which provides the NVIDIA devices and a `libnvidia-ml` matching
+the running driver for the overlay's live stats.
+
+```bash
+podman build -t localhost/aorus-lcd -f Containerfile .
+podman compose up -d                  # or docker compose; or, without compose, Quadlet:
+cp contrib/aorus-lcd.container ~/.config/containers/systemd/
+systemctl --user daemon-reload && systemctl --user start aorus-lcd
+```
+
+Two settings in `compose.yml` and the Quadlet unit are required, not cosmetic:
+
+- **`network_mode: host`**. `aorus-lcd`'s bus lock is an abstract Unix socket, and those belong
+  to a network namespace. In a namespace of its own, the service would not see a `flash`
+  started on the host, and both would write to the bus at once. Host networking also keeps the
+  UI on the host's loopback, which is what `aorus-lcd`'s DNS-rebinding check expects.
+- **`label=disable`**. Without it, SELinux denies the container access to the NVIDIA devices.
+
+UI choices and uploaded media live in the `aorus-lcd-state` volume. To start from a config
+file, mount it at `/etc/aorus-lcd/config.toml` (see the commented line). The bus lock already
+keeps a flash and the service apart, but stop the service before flashing anyway:
+`systemctl --user stop aorus-lcd` or `podman compose down`.
+
 ## Safety
 
 - **Before anything is erased**, the tool checks the image hash, that the image belongs to this

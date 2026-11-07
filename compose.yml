@@ -1,0 +1,28 @@
+# aorus-lcd service: web UI at http://127.0.0.1:5090/ (loopback only).
+# `podman compose up -d --build` or `docker compose up -d --build`.
+# Without a compose provider, use the Quadlet unit in contrib/aorus-lcd.container.
+services:
+  aorus-lcd:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: localhost/aorus-lcd:latest
+    container_name: aorus-lcd
+    restart: unless-stopped
+    network_mode: host                 # required: shares aorus-lcd's bus lock with the host
+    devices:
+      - nvidia.com/gpu=all             # CDI (nvidia-ctk cdi generate)
+    security_opt:
+      - label=disable
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:5090/api/status', timeout=4)"]
+      interval: 60s
+      timeout: 5s
+      start_period: 30s
+    volumes:
+      - aorus-lcd-state:/var/lib/aorus-lcd
+      # Optional config file; the web UI works without one.
+      # - /etc/aorus-lcd/config.toml:/etc/aorus-lcd/config.toml:ro
+
+volumes:
+  aorus-lcd-state:
