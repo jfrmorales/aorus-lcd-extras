@@ -28,8 +28,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 
 from .favorites import Favorites
-from .giphy import RATINGS, Giphy, GiphyError
-from .optimize import FITS, QUALITIES, optimize
+from .giphy import RATINGS, Giphy, GiphyError, RateLimited, send_from_thumb
+from .optimize import FITS, QUALITIES, estimate, optimize
 
 API_HEADER = "X-Aorus-Lcd"
 FORWARD_REQUEST = ("Content-Type", "X-Filename", API_HEADER)
@@ -116,9 +116,10 @@ def giphy_page():
 
 
 class Downloads:
-    """The last few GIPHY downloads, so changing fit or quality does not refetch."""
+    """Recent GIPHY downloads (~700 KB each), so estimating a page of results,
+    changing fit or quality, and sending one never fetch the same GIF twice."""
 
-    def __init__(self, giphy, size=8):
+    def __init__(self, giphy, size=48):
         self.giphy, self.size = giphy, size
         self.items = collections.OrderedDict()
         self.lock = threading.Lock()
@@ -136,6 +137,33 @@ class Downloads:
         return data
 
 
+class Estimates:
+    """Upload-time estimates for search results, cached by (id, fit, quality).
+    A few at a time: each one decodes a GIF and runs frames through Pillow."""
+
+    def __init__(self, downloads, size=2000, workers=3):
+        self.downloads, self.size = downloads, size
+        self.items = collections.OrderedDict()
+        self.lock = threading.Lock()
+        self.slots = threading.Semaphore(workers)
+
+    def get(self, gif_id, fit="auto", quality="balanced"):
+        if fit not in FITS or quality not in QUALITIES:
+            raise ValueError(f"fit is one of {', '.join(FITS)}; quality one of {', '.join(QUALITIES)}")
+        key = (gif_id, fit, quality)
+        with self.lock:
+            if key in self.items:
+                return self.items[key]
+        with self.slots:
+            seconds, frames = estimate(self.downloads.get(gif_id), fit, quality)
+        result = {"id": gif_id, "seconds": round(seconds, 1), "frames": frames}
+        with self.lock:
+            self.items[key] = result
+            while len(self.items) > self.size:
+                self.items.popitem(last=False)
+        return result
+
+
 def prepare(downloads, daemon, data):
     gif_id, fit, quality = str(data.get("id", "")), data.get("fit", "auto"), data.get("quality", "balanced")
     if fit not in FITS or quality not in QUALITIES:
@@ -147,7 +175,7 @@ def prepare(downloads, daemon, data):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "aorus-lcd-giphy"
-    giphy = daemon = downloads = favorites = None
+    giphy = daemon = downloads = favorites = estimates = None
 
     def log_message(self, *args):
         pass
@@ -187,12 +215,20 @@ class Handler(BaseHTTPRequestHandler):
     def _guard(self, fn):
         try:
             return fn()
+        except RateLimited as e:
+            self._send(429, {"error": str(e), "rate_limited": True})
         except GiphyError as e:
             self._send(502, {"error": str(e)})
         except DaemonError as e:
             self._send(e.status if 400 <= e.status < 600 else 502, {"error": str(e)})
         except (ValueError, KeyError, TypeError) as e:
             self._send(400, {"error": str(e)})
+
+    def _known(self, favorites):
+        """Favourites can be sent without an API call: tell the client where they are."""
+        for item in favorites:
+            self.giphy.remember(item["id"], item.get("send") or send_from_thumb(item.get("thumb")))
+        return favorites
 
     def _forward(self, method):
         length = int(self.headers.get("Content-Length") or 0)
@@ -217,7 +253,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._guard(lambda: self._send(200, self.giphy.search(query.get("q", ""),
                                                                          int(query.get("offset", 0)))))
         if url.path == "/giphy/api/favorites":
-            return self._send(200, {"items": self.favorites.list()})
+            return self._send(200, {"items": self._known(self.favorites.list())})
+        if url.path == "/giphy/api/usage":
+            return self._send(200, self.giphy.usage())
+        if url.path == "/giphy/api/estimate":
+            return self._guard(lambda: self._send(200, self.estimates.get(
+                query.get("id", ""), query.get("fit", "auto"), query.get("quality", "balanced"))))
         if url.path.startswith("/api/"):
             return self._forward("GET")
         self._send(404, {"error": "not found"})
@@ -235,7 +276,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/giphy/api/favorites":
                 action = data.get("action")
                 if action == "add":
-                    return self._send(200, {"items": self.favorites.add(data.get("item"))})
+                    return self._send(200, {"items": self._known(self.favorites.add(data.get("item")))})
                 if action == "remove":
                     return self._send(200, {"items": self.favorites.remove(data.get("id", ""))})
                 raise ValueError("action must be add or remove")
@@ -250,8 +291,9 @@ def state_dir():
 
 def make_server(giphy, daemon, bind="127.0.0.1", port=5091, favorites=None):
     favorites = favorites or Favorites(state_dir() / "favorites.json")
-    handler = type("BoundHandler", (Handler,), {"giphy": giphy, "daemon": daemon,
-                                                "downloads": Downloads(giphy), "favorites": favorites})
+    downloads = Downloads(giphy)
+    handler = type("BoundHandler", (Handler,), {"giphy": giphy, "daemon": daemon, "downloads": downloads,
+                                                "favorites": favorites, "estimates": Estimates(downloads)})
     server = ThreadingHTTPServer((bind, port), handler)
     server.daemon_threads = True
     return server

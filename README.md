@@ -181,6 +181,19 @@ Search shows them, ready to send again. They live on the server, in the
 `aorus-lcd-giphy-state` volume, so every browser sees the same list. Only the GIPHY id, title
 and thumbnail URL are kept: the GIF is fetched from GIPHY again when it is sent.
 
+### Light GIFs and the GIPHY quota
+
+Every result gets a badge with its upload time at the current fit and quality: green up to
+30 s, amber up to 90 s, red above. **⚡ Light only** keeps the green ones. The server measures
+each GIF by running four of its frames through the real pipeline; on 63 GIPHY results that
+was within about a second of the full calculation and found every GIF of 30 s or less.
+
+A GIPHY beta key allows **100 API calls an hour**, and only searching spends them: one per
+search or *More*. Searches and trending are reused for 15 minutes, and measuring, previewing,
+sending and favorites download from GIPHY's CDN with the URL the search already returned,
+which costs nothing. The footer shows the calls used in the last hour; if the quota runs out
+the page says so, and a production key from GIPHY lifts the limit.
+
 ### Filling the screen
 
 GIFs are usually square or 16:9; the panel is almost 2:1. **Auto** (the default) crops when

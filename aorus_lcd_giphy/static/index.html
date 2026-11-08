@@ -61,6 +61,13 @@
   .star[aria-pressed="true"], #favsel[aria-pressed="true"] { color: var(--gold); }
   button.toggle-on { border-color: var(--gold); color: var(--gold); }
   .count { font-variant-numeric: tabular-nums; opacity: .75; }
+  .badge { position: absolute; left: 6px; bottom: 6px; padding: 2px 8px; border-radius: 999px; font-size: 12px;
+           font-variant-numeric: tabular-nums; background: rgba(9,9,11,.74); color: var(--muted); pointer-events: none; }
+  .badge.light { color: var(--ok); } .badge.mid { color: #ffb347; } .badge.heavy { color: #ff7070; }
+  .bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: -4px 0 14px; }
+  .chip { padding: 6px 12px; border-radius: 999px; font-size: 13px; }
+  .chip small { color: var(--muted); }
+  .chip[aria-pressed="true"] { border-color: var(--ok); color: var(--ok); background: rgba(61,220,132,.08); }
   .actions { display: flex; gap: 10px; flex-wrap: wrap; }
   .more { display: flex; justify-content: center; margin-top: 16px; }
   .bezel { background: #000; border-radius: 12px; padding: 14px; border: 1px solid #222;
@@ -101,10 +108,16 @@
       <button class="primary" type="submit">Search</button>
       <button id="favs" type="button" aria-pressed="false" title="Your favourite GIFs" aria-label="Favorites">★<span class="lbl"> Favorites</span> <span id="favcount" class="count"></span></button>
     </form>
+    <div class="bar">
+      <button id="light" class="chip" type="button" aria-pressed="false"
+              title="Only GIFs that upload in 30 s or less with the current fit and quality">⚡ Light only <small>≤ 30 s</small></button>
+      <span id="lightinfo" class="muted"></span>
+    </div>
     <div id="grid" class="grid" aria-live="polite"></div>
     <div class="more"><button id="more" type="button" hidden>More</button></div>
     <p id="listmsg" class="msg"></p>
-    <div class="giphy">Powered by <strong>GIPHY</strong></div>
+    <div class="giphy">Powered by <strong>GIPHY</strong> <span id="usage" class="muted"
+      title="Only searches count: measuring, previewing and sending GIFs do not"></span></div>
   </section>
   <aside class="card sticky">
     <h2>On the panel</h2>
@@ -136,7 +149,7 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const SLOW_SECONDS = 120;
-const state = { q: "", offset: 0, items: [], selected: null, media: null, fit: "auto", quality: "balanced", favs: [], view: "search",
+const state = { q: "", offset: 0, items: [], selected: null, media: null, fit: "auto", quality: "balanced", favs: [], view: "search", lightOnly: false,
                 busy: false };
 
 async function api(path, body) {
@@ -166,9 +179,64 @@ function tile(item) {
   const star = document.createElement("button");
   star.type = "button"; star.className = "star"; star.dataset.favId = item.id;
   star.addEventListener("click", (e) => { e.stopPropagation(); toggleFav(item); });
-  cell.append(b, star);
+  const badge = document.createElement("span");
+  badge.className = "badge";
+  cell.append(b, star, badge);
   paintStar(star, item.id);
+  paintBadge(cell);
   return cell;
+}
+
+// -- upload-time estimates: the server measures a few frames of each GIF --
+const LIGHT_SECONDS = 30;
+const estimates = new Map();                      // "id|fit|quality" -> null (pending) | {seconds} | {error}
+let queue = [], running = 0;
+const estKey = (id) => `${id}|${state.fit}|${state.quality}`;
+
+function wantEstimates() {
+  queue = [...document.querySelectorAll(".cell")].map((c) => c.dataset.id).filter((id) => !estimates.has(estKey(id)));
+  pump();
+  paintBadges();
+}
+
+function pump() {
+  while (running < 3 && queue.length) {
+    const id = queue.shift(), key = estKey(id);
+    if (estimates.has(key)) continue;
+    estimates.set(key, null); running++;
+    const [fit, quality] = [state.fit, state.quality];
+    api("/giphy/api/estimate?" + new URLSearchParams({ id, fit, quality }))
+      .then((r) => r.json()).then((d) => estimates.set(key, d))
+      .catch(() => estimates.set(key, { error: true }))
+      .finally(() => { running--; paintBadges(); pump(); });
+  }
+}
+
+function paintBadge(cell) {
+  const v = estimates.get(estKey(cell.dataset.id)), badge = cell.querySelector(".badge");
+  const known = v && !v.error;
+  badge.textContent = known ? `≈ ${fmt(v.seconds)}` : v && v.error ? "?" : "…";
+  badge.className = "badge" + (known ? (v.seconds <= LIGHT_SECONDS ? " light" : v.seconds <= 90 ? " mid" : " heavy") : "");
+  badge.title = known ? `${v.frames} frames, upload ≈ ${fmt(v.seconds)} (${state.quality}, ${state.fit})` : "Measuring…";
+  cell.hidden = state.lightOnly && !(known && v.seconds <= LIGHT_SECONDS);
+}
+
+function paintBadges() {
+  const cells = [...document.querySelectorAll(".cell")];
+  cells.forEach(paintBadge);
+  if (!state.lightOnly) { $("lightinfo").textContent = ""; return; }
+  const done = cells.filter((c) => { const v = estimates.get(estKey(c.dataset.id)); return v !== undefined && v !== null; });
+  const light = cells.filter((c) => !c.hidden).length;
+  $("lightinfo").textContent = done.length < cells.length
+    ? `${light} light so far · checking ${done.length}/${cells.length}…`
+    : `${light} light of ${cells.length}` + (light < 6 && !$("more").hidden ? " · try More" : "");
+}
+
+function setLight(on) {
+  state.lightOnly = on;
+  $("light").setAttribute("aria-pressed", on);
+  try { localStorage.setItem("aorus-lcd-light", on ? "1" : ""); } catch (_) {}
+  paintBadges();
 }
 
 // -- favourites (kept by the server, so every browser shares them) --
@@ -213,6 +281,7 @@ function showFavs() {
   $("favs").classList.add("toggle-on"); $("favs").setAttribute("aria-pressed", "true");
   $("grid").replaceChildren(...state.favs.map(tile));
   $("more").hidden = true;
+  wantEstimates();
   say($("listmsg"), state.favs.length ? "" : "No favorites yet: tap ☆ on a GIF to keep it here.");
 }
 
@@ -232,10 +301,20 @@ async function search(append) {
     const data = await (await api("/giphy/api/search?" + params)).json();
     if (ticket !== state.searchTicket) return;
     data.items.forEach((it) => $("grid").append(tile(it)));
+    wantEstimates();
     state.offset += data.items.length;
     $("more").hidden = !data.items.length || state.offset >= data.total;
     say($("listmsg"), data.items.length || append ? "" : "No GIFs found.");
   } catch (e) { if (ticket === state.searchTicket) say($("listmsg"), e.message, "err"); }
+  usage();
+}
+
+async function usage() {
+  try {
+    const u = await (await api("/giphy/api/usage")).json();
+    $("usage").textContent = `· ${u.calls}/${u.limit} searches this hour`;
+    $("usage").style.color = u.calls >= u.limit * 0.8 ? "#ffb347" : "";
+  } catch (_) {}
 }
 
 function choose(item, el) {
@@ -326,6 +405,8 @@ async function status() {
 $("search").addEventListener("submit", (e) => { e.preventDefault(); leaveFavs(); state.q = $("q").value.trim(); search(false); });
 $("favs").addEventListener("click", () => { if (state.view === "favs") { leaveFavs(); search(false); } else showFavs(); });
 $("favsel").addEventListener("click", () => state.selected && toggleFav(state.selected));
+$("light").addEventListener("click", () => setLight(!state.lightOnly));
+try { if (localStorage.getItem("aorus-lcd-light")) setLight(true); } catch (_) {}
 $("more").addEventListener("click", () => search(true));
 $("send").addEventListener("click", send);
 document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => {
@@ -334,6 +415,7 @@ document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("clic
   if (b.dataset.fit) state.fit = b.dataset.fit;
   if (b.dataset.quality) state.quality = b.dataset.quality;
   prepare();
+  wantEstimates();                                // the badges depend on fit and quality
 }));
 loadFavs(); status(); search(false);
 </script>

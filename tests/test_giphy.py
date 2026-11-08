@@ -384,3 +384,141 @@ def test_favorites_need_the_api_header(served):
     code, _, _ = call(base + "/giphy/api/favorites", {"action": "add", "item": fav()},
                       {"Content-Type": "application/json"})
     assert code == 403
+
+
+# -- upload-time estimates ----------------------------------------------------------------
+
+def exact_seconds(gif, fit, quality):
+    from aorus_lcd import protocol as P
+    frames, delay = R.gif_frames(io.BytesIO(O.optimize(gif, fit, quality)[0]))
+    return P.gif_upload([R.to_rgb565(f) for f in frames], delay).estimate_seconds()
+
+
+def flat_gif(n=12, size=(200, 200)):
+    """Simple shapes on flat colour: the kind of GIF that uploads fast."""
+    from PIL import Image, ImageDraw
+    frames = []
+    for i in range(n):
+        im = Image.new("RGB", size, (20, 20, 60))
+        ImageDraw.Draw(im).ellipse([10 + 8 * i, 60, 70 + 8 * i, 120], fill=(250, 200, 40))
+        frames.append(im)
+    out = io.BytesIO()
+    frames[0].save(out, "GIF", save_all=True, append_images=frames[1:], duration=80, loop=0)
+    return out.getvalue()
+
+
+@pytest.mark.parametrize("gif", [make_gif(30, (200, 200)), make_gif(60, (356, 200), ms=100), flat_gif()],
+                         ids=["noisy-square", "noisy-wide-long", "flat"])
+@pytest.mark.parametrize("quality", ["fast", "balanced", "original"])
+def test_estimate_matches_the_real_upload(gif, quality):
+    seconds, frames = O.estimate(gif, "auto", quality)
+    exact = exact_seconds(gif, "auto", quality)
+    assert abs(seconds - exact) <= max(2.0, 0.1 * exact)
+    assert frames == O.optimize(gif, "auto", quality)[1]
+
+
+def test_estimate_tells_light_from_heavy():
+    assert O.estimate(flat_gif(), "auto", "balanced")[0] < 30 < O.estimate(make_gif(30, (200, 200)), "auto", "balanced")[0]
+
+
+def test_estimate_api_caches(served):
+    base, daemon = served
+    code, body, _ = call(base + "/giphy/api/estimate?id=abc123&fit=cover&quality=fast")
+    first = json.loads(body)
+    assert code == 200 and first["id"] == "abc123" and first["frames"] == 6 and first["seconds"] > 0
+    code, body, _ = call(base + "/giphy/api/estimate?id=abc123&fit=cover&quality=fast")
+    assert json.loads(body) == first
+    assert not daemon.calls                                 # estimates never touch the service
+
+
+def test_estimate_and_prepare_share_one_download(tmp_path):
+    web = FakeGiphyWeb()
+    giphy = G.Giphy("k", opener=web)
+    downloads = S.Downloads(giphy)
+    S.Estimates(downloads).get("abc123")
+    S.prepare(downloads, FakeDaemon(), {"id": "abc123"})
+    assert sum(1 for u in web.urls if u.endswith("200.gif")) == 1
+
+
+@pytest.mark.parametrize("query", ["id=abc123&fit=stretch", "id=abc123&quality=ultra"])
+def test_estimate_rejects_bad_options(served, query):
+    base, _ = served
+    code, _, _ = call(base + "/giphy/api/estimate?" + query)
+    assert code == 400
+
+
+# -- GIPHY API budget: only searches may spend calls --------------------------------------
+
+def api_calls(web):
+    return [u for u in web.urls if u.startswith(G.API)]
+
+
+def test_estimate_and_send_after_a_search_cost_no_api_call(tmp_path):
+    web = FakeGiphyWeb()
+    giphy = G.Giphy("k", opener=web)
+    downloads = S.Downloads(giphy)
+    giphy.search("cat")
+    assert len(api_calls(web)) == 1
+    S.Estimates(downloads).get("abc123")
+    S.prepare(downloads, FakeDaemon(), {"id": "abc123", "quality": "fast"})
+    assert len(api_calls(web)) == 1                         # media came from the CDN, by the search's URL
+
+
+def test_searches_are_cached_for_a_while():
+    web = FakeGiphyWeb()
+    giphy = G.Giphy("k", opener=web)
+    now = [1000.0]
+    giphy.clock = lambda: now[0]
+    giphy.search("cat"); giphy.search("cat"); giphy.search(""); giphy.search("")
+    assert len(api_calls(web)) == 2                         # one search, one trending
+    now[0] += G.SEARCH_TTL + 1
+    giphy.search("cat")
+    assert len(api_calls(web)) == 3
+    assert giphy.usage() == {"calls": 3, "limit": G.BETA_LIMIT}
+    now[0] += 3601
+    assert giphy.usage()["calls"] == 0
+
+
+def test_favorites_send_without_api_calls(served):
+    base, _ = served
+    thumb = "https://media2.giphy.com/media/v1.X/zz9/100.gif"
+    call(base + "/giphy/api/favorites", {"action": "add", "item": {"id": "zz9", "thumb": thumb}}, H)
+    items = json.loads(call(base + "/giphy/api/favorites")[1])["items"]
+    assert items[0]["send"] == "https://media2.giphy.com/media/v1.X/zz9/200.gif"
+
+
+def test_known_favorite_downloads_from_the_cdn(tmp_path):
+    web = FakeGiphyWeb()
+    giphy = G.Giphy("k", opener=web)
+    giphy.remember("zz9", "https://media2.giphy.com/media/v1.X/zz9/200.gif")
+    giphy.download("zz9")
+    assert not api_calls(web)
+
+
+def test_unknown_gif_costs_one_lookup_then_none():
+    web = FakeGiphyWeb()
+    giphy = G.Giphy("k", opener=web)
+    giphy.download("abc123"); giphy.download("abc123")
+    assert len(api_calls(web)) == 1
+
+
+def test_rate_limit_is_explained(tmp_path):
+    def limited(url, timeout=None):
+        raise urllib.error.HTTPError(url, 429, "Too Many Requests", {}, io.BytesIO(b"{}"))
+    giphy = G.Giphy("SECRET", opener=limited)
+    with pytest.raises(G.RateLimited) as e:
+        giphy.search("cat")
+    assert "100 calls an hour" in str(e.value) and "SECRET" not in str(e.value)
+    server = S.make_server(giphy, FakeDaemon(), port=0, favorites=F.Favorites(tmp_path / "f.json"))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        code, body, _ = call(f"http://127.0.0.1:{server.server_address[1]}/giphy/api/search?q=dog")
+        assert code == 429 and json.loads(body)["rate_limited"] is True
+    finally:
+        server.shutdown(); server.server_close()
+
+
+def test_search_results_carry_a_validated_send_url():
+    web = FakeGiphyWeb(gif=item(host="evil.example"))
+    with pytest.raises(G.GiphyError):
+        G.Giphy("k", opener=web).search("cat")

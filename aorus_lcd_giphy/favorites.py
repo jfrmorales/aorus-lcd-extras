@@ -10,7 +10,7 @@ import threading
 import time
 from pathlib import Path
 
-from .giphy import ID_RE, GiphyError, _media_url
+from .giphy import ID_RE, GiphyError, _media_url, send_from_thumb
 
 MAX_FAVORITES = 200
 MAX_TITLE = 140
@@ -27,9 +27,13 @@ def clean(item):
         thumb = _media_url(str(item.get("thumb", "")))
     except GiphyError as e:
         raise ValueError(str(e)) from None
+    try:
+        send = _media_url(str(item.get("send") or "")) if item.get("send") else send_from_thumb(thumb)
+    except GiphyError as e:
+        raise ValueError(str(e)) from None
     title = " ".join(str(item.get("title") or "GIF").split())[:MAX_TITLE]
     size = {k: max(0, min(4096, int(item.get(k) or 0))) for k in ("width", "height")}
-    return {"id": gif_id, "title": title, "thumb": thumb, **size}
+    return {"id": gif_id, "title": title, "thumb": thumb, "send": send, **size}
 
 
 class Favorites:

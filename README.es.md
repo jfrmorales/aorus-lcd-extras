@@ -176,6 +176,21 @@ servidor, en el volumen `aorus-lcd-giphy-state`, así que todos los navegadores 
 lista. Solo se guarda el id de GIPHY, el título y la URL de la miniatura: el GIF se vuelve a
 pedir a GIPHY al enviarlo.
 
+### GIF ligeros y el cupo de GIPHY
+
+Cada resultado lleva una etiqueta con su tiempo de subida con el ajuste y la calidad
+elegidos: verde hasta 30 s, ámbar hasta 90 s y roja por encima. **⚡ Light only** deja solo los
+verdes. El servidor mide cada GIF pasando cuatro de sus fotogramas por el proceso real; en 63
+resultados de GIPHY se quedó a un segundo del cálculo completo y encontró todos los GIF de 30 s
+o menos.
+
+Una clave beta de GIPHY permite **100 llamadas a la API por hora**, y solo las gasta buscar:
+una por búsqueda o por *More*. Las búsquedas y las tendencias se reutilizan durante 15
+minutos, y medir, previsualizar, enviar y los favoritos descargan del CDN de GIPHY con la URL
+que ya trajo la búsqueda, lo que no cuesta nada. El pie de la página muestra las llamadas de
+la última hora; si se agota el cupo la página lo dice, y una clave de producción de GIPHY
+quita el límite.
+
 ### Llenar la pantalla
 
 Los GIF suelen ser cuadrados o 16:9, y el panel es casi 2:1. **Auto** (por defecto) recorta

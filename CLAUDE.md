@@ -29,6 +29,10 @@ Trampas que no hay que deshacer:
 - Favoritos de GIPHY: `aorus_lcd_giphy/favorites.py`, en el volumen `aorus-lcd-giphy-state`
   (`STATE_DIRECTORY=/var/lib/aorus-lcd-giphy`, creado en la imagen con dueño `lcd`). Solo id,
   título y URL de miniatura de `*.giphy.com`; nunca el GIF.
+- Cupo de GIPHY: clave beta = 100 llamadas/hora. Solo buscar puede gastar (1 por página, con
+  caché de 15 min). Descargas, estimaciones y favoritos van al CDN con la URL de la búsqueda
+  (`Giphy.remember`); nunca añadir una llamada a la API por GIF (el 08/11/2026 eso agotó el
+  cupo en dos búsquedas). Los tests `api_calls` lo vigilan.
 - El panel no permite leer la imagen que muestra: la vista previa solo refleja lo subido desde
   la interfaz.
 - El RGB (`0x75`) dio NACK al activarlo el 07/11/2026 (estático rojo). Sin diagnosticar: no
