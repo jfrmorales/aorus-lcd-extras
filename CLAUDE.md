@@ -20,6 +20,14 @@ Trampas que no hay que deshacer:
   es un socket Unix abstracto, que depende del namespace de red. Sin ella, flash y servicio
   escribirían a la vez (probado el 07/11/2026). También `label=disable` y CDI
   `nvidia.com/gpu=all`.
+- GIPHY (`aorus_lcd_giphy`, 127.0.0.1:5091) nunca toca el bus: pasa por la API local del
+  daemon (`/api/media`, `/api/preview`, `/api/content`). La clave es el secreto de podman
+  `giphy_api_key`; nunca en git, en la imagen ni en el navegador. Descargas solo por id y solo
+  de `https://*.giphy.com`.
+- El panel no permite leer la imagen que muestra: la vista previa solo refleja lo subido desde
+  la interfaz.
+- El RGB (`0x75`) dio NACK al activarlo el 07/11/2026 (estático rojo). Sin diagnosticar: no
+  leer nunca de 0x75 (cuelga el bus).
 - Esta sesión puede correr en el distrobox `Ubuntu`: podman está en el host
   (`distrobox-host-exec podman ...`), y el host no tiene proveedor de `podman compose`.
 - Probado solo en `1458:416e`, LCD 1.1 → 1.3. No ampliar tarjetas sin hash verificado en

@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>AORUS LCD · GIPHY</title>
+<style>
+  :root {
+    --bg: #09090b; --card: #131316; --card2: #1a1a1f; --line: #26262d; --text: #ececf1;
+    --muted: #8b8b96; --accent: #ff2a2a; --accent-soft: rgba(255, 42, 42, .14); --ok: #3ddc84;
+    --radius: 14px; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Inter, sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 16px 24px; border-bottom: 1px solid var(--line);
+           position: sticky; top: 0; background: rgba(9,9,11,.92); backdrop-filter: blur(8px); z-index: 5; }
+  .brand { font-weight: 800; letter-spacing: .14em; font-size: 15px; }
+  .brand b { color: var(--accent); }
+  .grow { flex: 1; }
+  a { color: var(--muted); }
+  .pill { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .pill.on { color: var(--ok); border-color: rgba(61,220,132,.35); }
+  .pill.off { color: #ff7070; border-color: rgba(255,112,112,.35); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 440px); gap: 20px;
+         padding: 20px 24px 40px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 16px; } header { padding: 12px 16px; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
+  .card h2 { margin: 0 0 14px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .sticky { position: sticky; top: 76px; align-self: start; }
+  @media (max-width: 900px) { .sticky { position: static; order: -1; } }
+  form { display: flex; gap: 10px; margin-bottom: 16px; }
+  input[type=search] { flex: 1; min-width: 0; background: var(--card2); color: var(--text); border: 1px solid var(--line);
+                       border-radius: 10px; padding: 10px 12px; font: inherit; }
+  button { font: inherit; cursor: pointer; border-radius: 10px; padding: 9px 14px; border: 1px solid var(--line);
+           background: var(--card2); color: var(--text); }
+  button:hover { border-color: #3a3a44; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 650; }
+  button:disabled { opacity: .45; cursor: default; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .tile { position: relative; padding: 0; border: 2px solid transparent; background: var(--card2); border-radius: 10px;
+          overflow: hidden; aspect-ratio: 16 / 10; }
+  .tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .tile.sel { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .more { display: flex; justify-content: center; margin-top: 16px; }
+  .bezel { background: #000; border-radius: 12px; padding: 14px; border: 1px solid #222;
+           box-shadow: 0 0 0 1px #000, 0 18px 50px -20px var(--accent-soft); }
+  .lcd { position: relative; width: 100%; aspect-ratio: 320 / 170; background: #000; overflow: hidden; border-radius: 3px; }
+  .lcd img { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+  .lcd .placeholder { position: absolute; inset: 0; display: grid; place-items: center; color: #555; font-size: 13px;
+                      text-align: center; padding: 12px; }
+  .meta { color: var(--muted); font-size: 12px; margin: 12px 2px 0; min-height: 1.45em; }
+  .meta.slow { color: #ffb347; }
+  .seg { display: flex; background: var(--card2); border: 1px solid var(--line); border-radius: 11px; padding: 3px; margin: 14px 0; }
+  .seg button { flex: 1; border: 0; background: none; color: var(--muted); padding: 7px 10px; border-radius: 8px; }
+  .seg button.active { background: var(--card); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
+  .progress { height: 6px; background: var(--card2); border-radius: 999px; overflow: hidden; margin-top: 12px; }
+  .progress div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+  .msg { margin-top: 10px; font-size: 13px; min-height: 1.45em; }
+  .msg.err { color: #ff7070; }
+  .msg.ok { color: var(--ok); }
+  .muted { color: var(--muted); font-size: 12px; }
+  .giphy { margin-top: 16px; font-size: 12px; color: var(--muted); letter-spacing: .04em; }
+  .giphy strong { color: var(--text); letter-spacing: .1em; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="brand">AORUS <b>LCD</b> · GIPHY</div>
+    <div class="muted">Pick a GIF and send it to the panel</div>
+  </div>
+  <div class="grow"></div>
+  <a id="mainui" href="http://127.0.0.1:5090/">Panel settings</a>
+  <span id="pill" class="pill">service…</span>
+</header>
+<main>
+  <section class="card">
+    <form id="search">
+      <input id="q" type="search" placeholder="Search GIPHY (empty = trending)" maxlength="50" autocomplete="off">
+      <button class="primary" type="submit">Search</button>
+    </form>
+    <div id="grid" class="grid" aria-live="polite"></div>
+    <div class="more"><button id="more" type="button" hidden>More</button></div>
+    <p id="listmsg" class="msg"></p>
+    <div class="giphy">Powered by <strong>GIPHY</strong></div>
+  </section>
+  <aside class="card sticky">
+    <h2>On the panel</h2>
+    <div class="bezel"><div class="lcd">
+      <img id="preview" alt="Preview of the GIF on the panel" hidden>
+      <div id="placeholder" class="placeholder">Pick a GIF to preview it at the panel's 320×170 and colour depth</div>
+    </div></div>
+    <div id="meta" class="meta"></div>
+    <div class="seg" role="group" aria-label="Fit">
+      <button type="button" data-fit="auto" class="active" title="Crop if little is lost, else blurred background">Auto</button>
+      <button type="button" data-fit="contain" title="Whole GIF, black bars">Whole</button>
+      <button type="button" data-fit="cover" title="Fill the screen, crop the rest">Crop</button>
+    </div>
+    <div class="seg" role="group" aria-label="Quality">
+      <button type="button" data-quality="fast" title="12 frames, 16 colours">Fast</button>
+      <button type="button" data-quality="balanced" class="active" title="20 frames, 32 colours">Balanced</button>
+      <button type="button" data-quality="original" title="Every frame, full colour">Original</button>
+    </div>
+    <button id="send" class="primary" type="button" disabled>Send to panel</button>
+    <div class="progress" hidden id="progress"><div></div></div>
+    <p id="msg" class="msg" role="status"></p>
+    <p class="muted">Uploads run at ~15 KB/s and rewrite the panel's flash. Fast and Balanced keep fewer frames
+      and colours so they upload several times quicker; the preview shows exactly what you will get.</p>
+  </aside>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const SLOW_SECONDS = 120;
+const state = { q: "", offset: 0, items: [], selected: null, media: null, fit: "auto", quality: "balanced",
+                busy: false };
+
+async function api(path, body) {
+  const opts = body === undefined ? {} :
+    { method: "POST", headers: { "Content-Type": "application/json", "X-Aorus-Lcd": "1" }, body: JSON.stringify(body) };
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    let err = r.statusText;
+    try { err = (await r.json()).error || err; } catch (_) {}
+    throw new Error(err);
+  }
+  return r;
+}
+
+function say(el, text, kind) { el.textContent = text || ""; el.className = "msg" + (kind ? " " + kind : ""); }
+
+function tile(item) {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "tile"; b.title = item.title;
+  const img = document.createElement("img");
+  img.src = item.thumb; img.alt = item.title; img.loading = "lazy"; img.referrerPolicy = "no-referrer";
+  b.append(img);
+  b.addEventListener("click", () => choose(item, b));
+  return b;
+}
+
+async function search(append) {
+  if (!append) { state.offset = 0; $("grid").replaceChildren(); }
+  say($("listmsg"), "Loading…");
+  try {
+    const params = new URLSearchParams({ q: state.q, offset: state.offset });
+    const data = await (await api("/api/search?" + params)).json();
+    data.items.forEach((it) => $("grid").append(tile(it)));
+    state.offset += data.items.length;
+    $("more").hidden = !data.items.length || state.offset >= data.total;
+    say($("listmsg"), data.items.length || append ? "" : "No GIFs found.");
+  } catch (e) { say($("listmsg"), e.message, "err"); }
+}
+
+function choose(item, el) {
+  if (state.busy) return;
+  document.querySelectorAll(".tile.sel").forEach((t) => t.classList.remove("sel"));
+  el.classList.add("sel");
+  state.selected = item;
+  prepare();
+}
+
+async function prepare() {
+  const item = state.selected;
+  if (!item || state.busy) return;
+  const ticket = (state.ticket = (state.ticket || 0) + 1);
+  state.media = null;
+  $("send").disabled = true;
+  say($("msg"), "");
+  $("meta").textContent = "Preparing the GIF for the panel…";
+  $("meta").classList.remove("slow");
+  try {
+    const media = await (await api("/api/prepare", { id: item.id, fit: state.fit, quality: state.quality })).json();
+    if (ticket !== state.ticket) return;
+    state.media = media;
+    await refreshPreview(ticket);
+  } catch (e) { if (ticket === state.ticket) { $("meta").textContent = ""; say($("msg"), e.message, "err"); } }
+}
+
+async function refreshPreview(ticket) {
+  if (!state.media) return;
+  $("meta").textContent = "Rendering for the panel…";
+  try {
+    const r = await api("/api/preview", { source: state.media.source });
+    const secs = parseFloat(r.headers.get("X-Estimate-Seconds") || "0");
+    const blob = await r.blob();
+    if (ticket !== state.ticket) return;
+    const img = $("preview");
+    if (img.src) URL.revokeObjectURL(img.src);
+    img.src = URL.createObjectURL(blob); img.hidden = false; $("placeholder").hidden = true;
+    const frames = state.media.frames || 1;
+    const slow = secs > SLOW_SECONDS;
+    const how = { cover: "cropped", blur: "blurred background", contain: "whole" }[state.media.fit] || "";
+    $("meta").textContent = `${frames} frame${frames === 1 ? "" : "s"} · ${how} · upload ≈ ${fmt(secs)}` +
+      (slow ? " · long upload: a shorter GIF is kinder to the panel" : "");
+    $("meta").classList.toggle("slow", slow);
+    $("send").disabled = state.busy;
+  } catch (e) { $("meta").textContent = ""; say($("msg"), e.message, "err"); }
+}
+
+function fmt(s) { return s < 90 ? `${Math.round(s)} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`; }
+
+async function send() {
+  if (!state.media || state.busy) return;
+  state.busy = true; $("send").disabled = true;
+  $("progress").hidden = false; $("progress").firstElementChild.style.width = "0";
+  say($("msg"), "Uploading… do not close the service.");
+  try {
+    await api("/api/send", { source: state.media.source });
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 700));
+      const s = await (await api("/api/status")).json();
+      const job = s.job || {};
+      if (job.total) $("progress").firstElementChild.style.width = `${(100 * job.done / job.total).toFixed(1)}%`;
+      if (job.state === "done") { say($("msg"), "Done: the panel is showing it.", "ok"); break; }
+      if (job.state === "error") { say($("msg"), job.error || "upload failed", "err"); break; }
+    }
+  } catch (e) { say($("msg"), e.message, "err"); }
+  state.busy = false; $("send").disabled = !state.media;
+  setTimeout(() => { $("progress").hidden = true; }, 1500);
+  status();
+}
+
+async function status() {
+  const pill = $("pill");
+  try {
+    const s = await (await api("/api/status")).json();
+    const p = s.panel || {};
+    pill.textContent = p.connected ? `panel · fw ${p.firmware}` : "panel not connected";
+    pill.className = "pill " + (p.connected ? "on" : "off");
+  } catch (e) { pill.textContent = "aorus-lcd service down"; pill.className = "pill off"; }
+}
+
+$("search").addEventListener("submit", (e) => { e.preventDefault(); state.q = $("q").value.trim(); search(false); });
+$("more").addEventListener("click", () => search(true));
+$("send").addEventListener("click", send);
+document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => {
+  if (state.busy) return;
+  b.parentElement.querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b));
+  if (b.dataset.fit) state.fit = b.dataset.fit;
+  if (b.dataset.quality) state.quality = b.dataset.quality;
+  prepare();
+}));
+$("mainui").href = `${location.protocol}//${location.hostname}:5090/`;
+status(); search(false);
+</script>
+</body>
+</html>

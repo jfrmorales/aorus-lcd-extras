@@ -9,6 +9,8 @@ desde Linux la pantalla lateral **LCD Edge View**:
 - **Un contenedor rootless** para el servicio y la interfaz web de `aorus-lcd`, para cambiar lo
   que muestra la pantalla ([El servicio del panel en un
   contenedor](#el-servicio-del-panel-en-un-contenedor)).
+- **`aorus-lcd-giphy`**: una página para buscar en GIPHY y enviar un GIF al panel
+  ([GIPHY](#giphy)).
 
 ## Actualización de firmware
 
@@ -129,6 +131,43 @@ Lo que eliges en la interfaz y los ficheros que subes viven en el volumen `aorus
 Para partir de un fichero de configuración, móntalo en `/etc/aorus-lcd/config.toml` (está la
 línea comentada). El bloqueo de bus ya separa el flasheo del servicio, pero aun así para el
 servicio antes de flashear: `systemctl --user stop aorus-lcd` o `podman compose down`.
+
+## GIPHY
+
+`aorus-lcd-giphy` sirve una página en `http://127.0.0.1:5091/`: buscas en GIPHY (con la
+búsqueda vacía salen las tendencias), eliges un GIF, ves la vista previa a la resolución
+(320×170) y profundidad de color del panel junto con el tiempo estimado de subida, y lo envías.
+No toca el bus: pasa el GIF a la API local del servicio `aorus-lcd`, que sigue siendo el dueño
+del panel y de su bloqueo de bus.
+
+Consigue una clave de **API** (no de SDK) en [developers.giphy.com](https://developers.giphy.com/),
+guárdala como secreto de podman y arranca la unidad, que usa la misma imagen:
+
+```bash
+read -rsp 'GIPHY API key: ' K && printf %s "$K" | podman secret create giphy_api_key - && unset K
+cp contrib/aorus-lcd-giphy.container ~/.config/containers/systemd/
+systemctl --user daemon-reload && systemctl --user start aorus-lcd-giphy
+```
+
+Con compose, pon `GIPHY_API_KEY=...` en un fichero `.env` (ignorado por git). La clave se queda
+en el servidor: el navegador solo ve ids de GIF y URLs de medios de GIPHY, y las descargas se
+limitan a `https://*.giphy.com`. `GIPHY_RATING` (`g`, `pg`, `pg-13`, `r`; por defecto `pg`) y
+`GIPHY_LANG` (por defecto `es`) ajustan la búsqueda.
+
+Las subidas van a unos 15 KB/s, y el RLE del panel apenas comprime GIF fotográficos con
+*dithering*: tal cual, un resultado de GIPHY de 100 fotogramas tarda 8 minutos. Por eso la
+página prepara antes cada GIF, escalado a 320×170 en el servidor, y la vista previa muestra
+exactamente lo que se enviará:
+
+| Calidad | Fotogramas | Colores | Medido en 6 resultados de GIPHY |
+|---|---|---|---|
+| Rápido | 12 | 16, filtro de mediana 5 | 16-35 s |
+| **Equilibrado** (por defecto) | 20 | 32, filtro de mediana 3 | 33-88 s |
+| Original | todos | todos | 1-8 min |
+
+Los fotogramas que se conservan se reparten por todo el GIF, que mantiene su duración. El
+filtro de mediana quita el ruido de *dithering* que rompe los tramos del RLE, y la paleta se
+reduce sin *dithering*. La página avisa si una subida va a pasar de 2 minutos.
 
 ## Seguridad
 

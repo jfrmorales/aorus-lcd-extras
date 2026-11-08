@@ -8,6 +8,8 @@ Add-ons for [`aorus-lcd`](https://github.com/c-drew/gigabyte-aorus-lcd-linux), w
 - **`aorus-lcd-fw-update`**: update the panel firmware on a working panel (below).
 - **A rootless container** for `aorus-lcd`'s service and web UI, to change what the screen
   shows ([Run the panel service in a container](#run-the-panel-service-in-a-container)).
+- **`aorus-lcd-giphy`**: a page to search GIPHY and send a GIF to the panel
+  ([GIPHY](#giphy)).
 
 ## Firmware update
 
@@ -136,6 +138,41 @@ UI choices and uploaded media live in the `aorus-lcd-state` volume. To start fro
 file, mount it at `/etc/aorus-lcd/config.toml` (see the commented line). The bus lock already
 keeps a flash and the service apart, but stop the service before flashing anyway:
 `systemctl --user stop aorus-lcd` or `podman compose down`.
+
+## GIPHY
+
+`aorus-lcd-giphy` serves a page at `http://127.0.0.1:5091/`: search GIPHY (empty search =
+trending), pick a GIF, check the preview at the panel's 320×170 and colour depth along with the
+upload estimate, and send it. It never touches the bus: it hands the GIF to the `aorus-lcd`
+service's local API, which keeps owning the panel and its bus lock.
+
+Get an **API** key (not an SDK key) at [developers.giphy.com](https://developers.giphy.com/),
+then store it as a podman secret and start the unit; it runs from the same image:
+
+```bash
+read -rsp 'GIPHY API key: ' K && printf %s "$K" | podman secret create giphy_api_key - && unset K
+cp contrib/aorus-lcd-giphy.container ~/.config/containers/systemd/
+systemctl --user daemon-reload && systemctl --user start aorus-lcd-giphy
+```
+
+With compose, put `GIPHY_API_KEY=...` in a `.env` file (git-ignored). The key stays on the
+server; the browser only sees GIF ids and GIPHY media URLs, and downloads are limited to
+`https://*.giphy.com`. `GIPHY_RATING` (`g`, `pg`, `pg-13`, `r`; default `pg`) and `GIPHY_LANG`
+(default `es`) tune the search.
+
+Uploads move at ~15 KB/s, and the panel's RLE barely compresses photographic, dithered GIFs:
+sent as is, a 100-frame GIPHY result takes 8 minutes. So the page prepares each GIF first,
+scaled to 320×170 on the server, and the preview shows exactly what will be sent:
+
+| Quality | Frames | Colours | Measured on 6 GIPHY results |
+|---|---|---|---|
+| Fast | 12 | 16, median filter 5 | 16-35 s |
+| **Balanced** (default) | 20 | 32, median filter 3 | 33-88 s |
+| Original | all | full | 1-8 min |
+
+Fewer frames are spread over the whole GIF so it keeps its length. The median filter removes
+the dither noise that breaks RLE runs, and the palette is reduced without dithering. The page
+warns when an upload would take more than 2 minutes.
 
 ## Safety
 

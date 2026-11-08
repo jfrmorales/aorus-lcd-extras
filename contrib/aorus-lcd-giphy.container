@@ -1,0 +1,27 @@
+# Quadlet unit: the GIPHY page (http://127.0.0.1:5091/), next to aorus-lcd.container.
+# It never touches the bus: it hands GIFs to the aorus-lcd service's local API.
+#
+#   read -rsp 'GIPHY API key: ' K && printf %s "$K" | podman secret create giphy_api_key - && unset K
+#   cp contrib/aorus-lcd-giphy.container ~/.config/containers/systemd/
+#   systemctl --user daemon-reload && systemctl --user start aorus-lcd-giphy
+[Unit]
+Description=GIPHY page for the AORUS LCD (127.0.0.1:5091)
+Wants=aorus-lcd.service
+After=aorus-lcd.service
+
+[Container]
+Image=localhost/aorus-lcd:latest
+ContainerName=aorus-lcd-giphy
+Entrypoint=aorus-lcd-giphy
+# Host network: reaches the service on 127.0.0.1:5090 and stays on the host's loopback.
+Network=host
+Secret=giphy_api_key,type=env,target=GIPHY_API_KEY
+# Environment=GIPHY_RATING=pg
+# Environment=GIPHY_LANG=es
+
+[Service]
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -24,5 +24,17 @@ services:
       # Optional config file; the web UI works without one.
       # - /etc/aorus-lcd/config.toml:/etc/aorus-lcd/config.toml:ro
 
+  # GIPHY page at http://127.0.0.1:5091/. Put GIPHY_API_KEY=... in .env (git-ignored).
+  aorus-lcd-giphy:
+    image: localhost/aorus-lcd:latest
+    container_name: aorus-lcd-giphy
+    restart: unless-stopped
+    network_mode: host                 # reaches the service on 127.0.0.1:5090
+    entrypoint: ["aorus-lcd-giphy"]
+    environment:
+      GIPHY_API_KEY: ${GIPHY_API_KEY:?set GIPHY_API_KEY in .env}
+    depends_on:
+      - aorus-lcd
+
 volumes:
   aorus-lcd-state:

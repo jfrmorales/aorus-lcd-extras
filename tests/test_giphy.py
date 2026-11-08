@@ -1,0 +1,273 @@
+"""GIPHY page: client parsing, download guards and the HTTP handler, with fakes
+for GIPHY and for the aorus-lcd service (no network, no panel)."""
+import io
+import json
+import random
+import threading
+import urllib.error
+import urllib.request
+
+import pytest
+
+from aorus_lcd import render as R
+from aorus_lcd_giphy import giphy as G
+from aorus_lcd_giphy import optimize as O
+from aorus_lcd_giphy import server as S
+
+def make_gif(n=30, size=(200, 200), ms=40):
+    """A noisy animated GIF, like a photographic GIPHY result."""
+    from PIL import Image
+    rng = random.Random(1)
+    frames = [Image.frombytes("RGB", size, bytes(rng.randrange(256) for _ in range(size[0] * size[1] * 3)))
+              for _ in range(n)]
+    out = io.BytesIO()
+    frames[0].save(out, "GIF", save_all=True, append_images=frames[1:], duration=ms, loop=0)
+    return out.getvalue()
+
+
+GIF = make_gif(6, (40, 40))
+
+
+def item(gif_id="abc123", host="media2.giphy.com"):
+    url = f"https://{host}/media/{gif_id}/200.gif"
+    return {"id": gif_id, "title": "A cat",
+            "images": {"fixed_height_small": {"url": url, "width": "100", "height": "100"},
+                       "fixed_height": {"url": url, "width": "200", "height": "200", "size": "4096"}}}
+
+
+class Resp(io.BytesIO):
+    def __init__(self, data, headers=None):
+        super().__init__(data)
+        self.headers = headers or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class FakeGiphyWeb:
+    """Answers GIPHY API URLs and media URLs; records what was requested."""
+
+    def __init__(self, media=GIF, gif=None):
+        self.media, self.gif, self.urls = media, gif or item(), []
+
+    def __call__(self, url, timeout=None):
+        self.urls.append(url)
+        if url.startswith(G.API + "/search") or url.startswith(G.API + "/trending"):
+            body = {"meta": {"status": 200}, "data": [self.gif, {"id": "x", "images": {}}],
+                    "pagination": {"offset": 0, "total_count": 1}}
+        elif url.startswith(G.API + "/"):
+            body = {"meta": {"status": 200}, "data": self.gif}
+        else:
+            return Resp(self.media)
+        return Resp(json.dumps(body).encode())
+
+
+def test_search_keeps_the_key_server_side_and_drops_unusable_items():
+    web = FakeGiphyWeb()
+    out = G.Giphy("SECRET", opener=web).search("cat")
+    assert [i["id"] for i in out["items"]] == ["abc123"]
+    assert out["items"][0]["thumb"].startswith("https://media2.giphy.com/")
+    assert "SECRET" in web.urls[0] and "SECRET" not in json.dumps(out)
+
+
+def test_empty_query_is_trending():
+    web = FakeGiphyWeb()
+    G.Giphy("k", opener=web).search("  ")
+    assert web.urls[0].startswith(G.API + "/trending")
+
+
+def test_download_by_id():
+    name, data = G.Giphy("k", opener=FakeGiphyWeb()).download("abc123")
+    assert name == "giphy-abc123.gif" and data == GIF
+
+
+@pytest.mark.parametrize("bad", ["../etc", "a/b", "", "x" * 65, "id?api_key=1"])
+def test_download_rejects_bad_ids(bad):
+    with pytest.raises(G.GiphyError):
+        G.Giphy("k", opener=FakeGiphyWeb()).download(bad)
+
+
+@pytest.mark.parametrize("host", ["evil.example", "giphy.com.evil.example", "127.0.0.1"])
+def test_download_only_from_giphy_hosts(host):
+    with pytest.raises(G.GiphyError):
+        G.Giphy("k", opener=FakeGiphyWeb(gif=item(host=host))).download("abc123")
+
+
+def test_download_rejects_non_gif_and_oversize():
+    with pytest.raises(G.GiphyError, match="GIF"):
+        G.Giphy("k", opener=FakeGiphyWeb(media=b"<html>")).download("abc123")
+    with pytest.raises(G.GiphyError, match="larger"):
+        G.Giphy("k", opener=FakeGiphyWeb(media=b"GIF89a" + b"\0" * G.MAX_DOWNLOAD)).download("abc123")
+
+
+def test_errors_do_not_leak_the_key():
+    def failing(url, timeout=None):
+        raise urllib.error.URLError(f"cannot reach {url}")
+    with pytest.raises(G.GiphyError) as e:
+        G.Giphy("SECRET", opener=failing).search("cat")
+    assert "SECRET" not in str(e.value)
+
+
+def test_requires_a_key():
+    with pytest.raises(G.GiphyError):
+        G.Giphy("")
+
+
+class FakeDaemon:
+    def __init__(self):
+        self.calls = []
+
+    def status(self):
+        return {"panel": {"connected": True, "firmware": "1.3"}, "job": {"state": "idle"}}
+
+    def save_media(self, name, data):
+        self.calls.append(("media", name, len(data)))
+        return {"source": f"/var/lib/aorus-lcd/media/{name}", "frames": 2}
+
+    def preview(self, content):
+        self.calls.append(("preview", content))
+        return b"GIF89a", "image/gif", 12.5
+
+    def send(self, content):
+        self.calls.append(("send", content))
+        return {"ok": True}
+
+
+@pytest.fixture
+def served():
+    daemon = FakeDaemon()
+    server = S.make_server(G.Giphy("k", opener=FakeGiphyWeb()), daemon, port=0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_address[1]}", daemon
+    server.shutdown()
+    server.server_close()
+
+
+def call(url, body=None, headers=None):
+    req = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(),
+                                 headers=headers or {}, method="GET" if body is None else "POST")
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status, r.read(), r.headers
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(), e.headers
+
+
+def test_page_and_search(served):
+    base, _ = served
+    code, body, headers = call(base + "/")
+    assert code == 200 and b"Powered by" in body
+    assert "https://*.giphy.com" in headers["Content-Security-Policy"]
+    code, body, _ = call(base + "/api/search?q=cat")
+    assert code == 200 and json.loads(body)["items"][0]["id"] == "abc123"
+
+
+def test_post_needs_the_api_header(served):
+    base, daemon = served
+    code, _, _ = call(base + "/api/send", {"source": "/x.gif"})
+    assert code == 403 and not daemon.calls
+
+
+def test_rejects_foreign_host_header(served):
+    base, _ = served
+    code, _, _ = call(base + "/", headers={"Host": "evil.example"})
+    assert code == 403
+
+
+def test_prepare_preview_send(served):
+    base, daemon = served
+    h = {"X-Aorus-Lcd": "1", "Content-Type": "application/json"}
+    code, body, _ = call(base + "/api/prepare", {"id": "abc123", "fit": "cover", "quality": "fast"}, h)
+    media = json.loads(body)
+    source = media["source"]
+    assert code == 200 and media["frames"] == 6 and media["fit"] == "cover"
+    assert daemon.calls[0][:2] == ("media", "giphy-abc123-cover-fast.gif")
+    code, body, headers = call(base + "/api/preview", {"source": source}, h)
+    assert code == 200 and headers["X-Estimate-Seconds"] == "12.5"
+    code, _, _ = call(base + "/api/send", {"source": source}, h)
+    assert code == 202
+    assert daemon.calls[-1] == ("send", {"type": "gif", "source": source, "fit": "contain",
+                                         "background": "#000000"})
+
+
+@pytest.mark.parametrize("body", [{"id": "abc123", "fit": "stretch"}, {"id": "abc123", "quality": "ultra"}])
+def test_prepare_rejects_bad_options(served, body):
+    base, daemon = served
+    code, _, _ = call(base + "/api/prepare", body, {"X-Aorus-Lcd": "1", "Content-Type": "application/json"})
+    assert code == 400 and not daemon.calls
+
+
+def test_downloads_are_cached():
+    web = FakeGiphyWeb()
+    downloads = S.Downloads(G.Giphy("k", opener=web), size=1)
+    downloads.get("abc123")
+    downloads.get("abc123")
+    assert sum(1 for u in web.urls if "media" in u and "200.gif" in u) == 1
+
+
+@pytest.mark.parametrize("quality", ["fast", "balanced", "original"])
+def test_optimize_output_is_what_the_panel_decodes(quality):
+    src = make_gif(30, (200, 200), ms=40)
+    gif, n, used = O.optimize(src, "contain", quality)
+    cap = O.QUALITIES[quality].max_frames or 30
+    assert n == cap
+    from PIL import Image
+    with Image.open(io.BytesIO(gif)) as im:
+        assert im.size == (320, 170) and im.n_frames == n + 1      # + the black frame the panel skips
+        assert im.convert("RGB").getextrema() == ((0, 0), (0, 0), (0, 0))
+        total = 0
+        for i in range(1, n + 1):
+            im.seek(i)
+            total += im.info["duration"]
+    assert total == 30 * 40                   # same length, fewer frames
+    if O.QUALITIES[quality].colors:
+        path = io.BytesIO(gif)
+        frames, _ = R.gif_frames(path)
+        for f in frames:
+            assert len(f.getcolors(1 << 16)) <= O.QUALITIES[quality].colors + 1   # + black bars
+
+
+def test_optimize_shrinks_the_upload():
+    from aorus_lcd import protocol as P
+    src = make_gif(30, (200, 200))
+
+    def seconds(quality):
+        frames, delay = R.gif_frames(io.BytesIO(O.optimize(src, "cover", quality)[0]))
+        return P.gif_upload([R.to_rgb565(f) for f in frames], delay).estimate_seconds()
+    assert seconds("fast") < seconds("balanced") < seconds("original") / 1.4
+
+
+@pytest.mark.parametrize("size, fit", [((356, 200), "cover"), ((200, 200), "blur"), ((150, 300), "blur"),
+                                       ((640, 340), "cover")])
+def test_auto_fit_crops_wide_gifs_and_blurs_the_rest(size, fit):
+    assert O.resolve_fit("auto", *size) == fit
+
+
+def test_auto_fit_fills_the_screen():
+    """A square GIF on a 320x170 screen: no black bars left anywhere."""
+    from PIL import Image
+    out = io.BytesIO()
+    Image.new("RGB", (200, 200), (90, 110, 220)).save(out, "GIF")
+    gif, _, used = O.optimize(out.getvalue(), "auto", "balanced")
+    frame = R.gif_frames(io.BytesIO(gif))[0][1].convert("RGB")      # [0] is the skipped black frame
+    assert used == "blur"
+    for x in (0, 5, 319):
+        assert frame.getpixel((x, 85)) != (0, 0, 0)
+
+
+@pytest.mark.parametrize("quality", ["fast", "balanced"])
+def test_long_gifs_keep_their_speed(quality):
+    """10 s at 100 ms: 12 or 20 frames would need 500-830 ms each, more than the
+    panel's 255 ms, so it would play several times too fast. Keep enough frames."""
+    src = make_gif(100, (40, 40), ms=100)
+    gif, n, _ = O.optimize(src, "contain", quality)
+    _, delay = R.gif_frames(io.BytesIO(gif))
+    assert n == 40 and delay == 250
+
+
+def test_optimize_rejects_garbage():
+    with pytest.raises(ValueError):
+        O.optimize(b"GIF89a not really", "contain", "balanced")
