@@ -158,7 +158,7 @@ never touches the bus: everything goes through the `aorus-lcd` service's local A
 keeps owning the panel and its bus lock. The service's own address (`:5090`) still works.
 
 <p align="center"><img src="docs/img/ui-mobile.png" width="620"
-  alt="The GIPHY page on a phone: search results, then the panel preview with fit and quality"></p>
+  alt="The GIPHY page on a phone: search results with favorite stars, then the panel preview with fit, quality and favorites"></p>
 
 Get an **API** key (not an SDK key) at [developers.giphy.com](https://developers.giphy.com/),
 then store it as a podman secret and start the unit; it runs from the same image:
@@ -173,6 +173,13 @@ With compose, put `GIPHY_API_KEY=...` in a `.env` file (git-ignored). The key st
 server; the browser only sees GIF ids and GIPHY media URLs, and downloads are limited to
 `https://*.giphy.com`. `GIPHY_RATING` (`g`, `pg`, `pg-13`, `r`; default `pg`) and `GIPHY_LANG`
 (default `es`) tune the search.
+
+### Favorites
+
+Tap ☆ on any GIF, or *Add to favorites* under the preview, to keep it; **★ Favorites** next to
+Search shows them, ready to send again. They live on the server, in the
+`aorus-lcd-giphy-state` volume, so every browser sees the same list. Only the GIPHY id, title
+and thumbnail URL are kept: the GIF is fetched from GIPHY again when it is sent.
 
 ### Filling the screen
 

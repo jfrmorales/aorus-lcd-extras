@@ -3,7 +3,7 @@
   /            aorus-lcd's own web UI, proxied, with a nav bar added
   /giphy       search GIPHY and send a GIF to the panel
   /api/...     forwarded verbatim to the aorus-lcd service
-  /giphy/api/  search and prepare (download + optimize) a GIF
+  /giphy/api/  search, prepare (download + optimize) a GIF, and favourites
 
 It does not talk to the panel itself: everything goes through the aorus-lcd
 service's local API, so the service keeps owning the bus, the upload pacing
@@ -23,9 +23,11 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 
+from .favorites import Favorites
 from .giphy import RATINGS, Giphy, GiphyError
 from .optimize import FITS, QUALITIES, optimize
 
@@ -145,7 +147,7 @@ def prepare(downloads, daemon, data):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "aorus-lcd-giphy"
-    giphy = daemon = downloads = None
+    giphy = daemon = downloads = favorites = None
 
     def log_message(self, *args):
         pass
@@ -214,6 +216,8 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/giphy/api/search":
             return self._guard(lambda: self._send(200, self.giphy.search(query.get("q", ""),
                                                                          int(query.get("offset", 0)))))
+        if url.path == "/giphy/api/favorites":
+            return self._send(200, {"items": self.favorites.list()})
         if url.path.startswith("/api/"):
             return self._forward("GET")
         self._send(404, {"error": "not found"})
@@ -228,13 +232,26 @@ class Handler(BaseHTTPRequestHandler):
             data = self._json()
             if self.path == "/giphy/api/prepare":
                 return self._send(200, prepare(self.downloads, self.daemon, data))
+            if self.path == "/giphy/api/favorites":
+                action = data.get("action")
+                if action == "add":
+                    return self._send(200, {"items": self.favorites.add(data.get("item"))})
+                if action == "remove":
+                    return self._send(200, {"items": self.favorites.remove(data.get("id", ""))})
+                raise ValueError("action must be add or remove")
             return self._send(404, {"error": "not found"})
         self._guard(route)
 
 
-def make_server(giphy, daemon, bind="127.0.0.1", port=5091):
+def state_dir():
+    return Path(os.environ.get("STATE_DIRECTORY") or
+                Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "aorus-lcd-giphy")
+
+
+def make_server(giphy, daemon, bind="127.0.0.1", port=5091, favorites=None):
+    favorites = favorites or Favorites(state_dir() / "favorites.json")
     handler = type("BoundHandler", (Handler,), {"giphy": giphy, "daemon": daemon,
-                                                "downloads": Downloads(giphy)})
+                                                "downloads": Downloads(giphy), "favorites": favorites})
     server = ThreadingHTTPServer((bind, port), handler)
     server.daemon_threads = True
     return server

@@ -33,8 +33,12 @@ services:
     entrypoint: ["aorus-lcd-giphy"]
     environment:
       GIPHY_API_KEY: ${GIPHY_API_KEY:?set GIPHY_API_KEY in .env}
+      STATE_DIRECTORY: /var/lib/aorus-lcd-giphy
+    volumes:
+      - aorus-lcd-giphy-state:/var/lib/aorus-lcd-giphy    # favourite GIFs
     depends_on:
       - aorus-lcd
 
 volumes:
   aorus-lcd-state:
+  aorus-lcd-giphy-state:

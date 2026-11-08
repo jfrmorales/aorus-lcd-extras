@@ -27,7 +27,8 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends fonts-dejavu-core librsvg2-bin \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 990 --home-dir /var/lib/aorus-lcd --create-home lcd \
- && mkdir -p /etc/aorus-lcd
+ && mkdir -p /etc/aorus-lcd /var/lib/aorus-lcd-giphy \
+ && chown lcd: /var/lib/aorus-lcd-giphy
 COPY --from=build /opt/venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH \
     STATE_DIRECTORY=/var/lib/aorus-lcd \

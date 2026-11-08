@@ -17,6 +17,9 @@ Entrypoint=aorus-lcd-giphy
 # Host network: reaches the service on 127.0.0.1:5090 and stays on the host's loopback.
 Network=host
 Secret=giphy_api_key,type=env,target=GIPHY_API_KEY
+# Favourite GIFs (ids, titles, thumbnail URLs).
+Volume=aorus-lcd-giphy-state:/var/lib/aorus-lcd-giphy
+Environment=STATE_DIRECTORY=/var/lib/aorus-lcd-giphy
 # Environment=GIPHY_RATING=pg
 # Environment=GIPHY_LANG=es
 

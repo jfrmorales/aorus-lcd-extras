@@ -8,7 +8,7 @@
 <style>
   :root {
     --bg: #09090b; --card: #131316; --card2: #1a1a1f; --line: #26262d; --text: #ececf1;
-    --muted: #8b8b96; --accent: #ff2a2a; --accent-soft: rgba(255, 42, 42, .14); --ok: #3ddc84;
+    --muted: #8b8b96; --accent: #ff2a2a; --accent-soft: rgba(255, 42, 42, .14); --ok: #3ddc84; --gold: #ffc83d;
     --radius: 14px; color-scheme: dark;
   }
   * { box-sizing: border-box; }
@@ -26,7 +26,7 @@
   .pill.off { color: #ff7070; border-color: rgba(255,112,112,.35); }
   main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 440px); gap: 20px;
          padding: 20px 24px 40px; max-width: 1400px; margin: 0 auto; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 16px; } header { padding: 12px 16px; } }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); padding: 16px; } header { padding: 12px 16px; } }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
   .card h2 { margin: 0 0 14px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
   .sticky { position: sticky; top: 76px; align-self: start; }
@@ -36,6 +36,7 @@
     header .muted, header .grow { display: none; }
     header > div:first-child { flex: 1 0 100%; }
     .pill { white-space: nowrap; }
+    #favs .lbl { display: none; }
   }
   form { display: flex; gap: 10px; margin-bottom: 16px; }
   input[type=search] { flex: 1; min-width: 0; background: var(--card2); color: var(--text); border: 1px solid var(--line);
@@ -51,6 +52,16 @@
           overflow: hidden; aspect-ratio: 16 / 10; }
   .tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .tile.sel { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .cell { position: relative; min-width: 0; }            /* else the thumbnail's width sets the column's */
+  .cell .tile { width: 100%; }
+  .star { position: absolute; top: 6px; right: 6px; width: 32px; height: 32px; padding: 0; border-radius: 50%;
+          border: 1px solid rgba(255,255,255,.18); background: rgba(9,9,11,.62); color: #fff; font-size: 17px;
+          line-height: 1; backdrop-filter: blur(4px); }
+  .star:hover { border-color: rgba(255,255,255,.5); }
+  .star[aria-pressed="true"], #favsel[aria-pressed="true"] { color: var(--gold); }
+  button.toggle-on { border-color: var(--gold); color: var(--gold); }
+  .count { font-variant-numeric: tabular-nums; opacity: .75; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; }
   .more { display: flex; justify-content: center; margin-top: 16px; }
   .bezel { background: #000; border-radius: 12px; padding: 14px; border: 1px solid #222;
            box-shadow: 0 0 0 1px #000, 0 18px 50px -20px var(--accent-soft); }
@@ -88,6 +99,7 @@
     <form id="search">
       <input id="q" type="search" placeholder="Search GIPHY (empty = trending)" maxlength="50" autocomplete="off">
       <button class="primary" type="submit">Search</button>
+      <button id="favs" type="button" aria-pressed="false" title="Your favourite GIFs" aria-label="Favorites">★<span class="lbl"> Favorites</span> <span id="favcount" class="count"></span></button>
     </form>
     <div id="grid" class="grid" aria-live="polite"></div>
     <div class="more"><button id="more" type="button" hidden>More</button></div>
@@ -111,7 +123,10 @@
       <button type="button" data-quality="balanced" class="active" title="20 frames, 32 colours">Balanced</button>
       <button type="button" data-quality="original" title="Every frame, full colour">Original</button>
     </div>
-    <button id="send" class="primary" type="button" disabled>Send to panel</button>
+    <div class="actions">
+      <button id="send" class="primary" type="button" disabled>Send to panel</button>
+      <button id="favsel" type="button" aria-pressed="false" disabled>☆ Add to favorites</button>
+    </div>
     <div class="progress" hidden id="progress"><div></div></div>
     <p id="msg" class="msg" role="status"></p>
     <p class="muted">Uploads run at ~15 KB/s and rewrite the panel's flash. Fast and Balanced keep fewer frames
@@ -121,7 +136,7 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const SLOW_SECONDS = 120;
-const state = { q: "", offset: 0, items: [], selected: null, media: null, fit: "auto", quality: "balanced",
+const state = { q: "", offset: 0, items: [], selected: null, media: null, fit: "auto", quality: "balanced", favs: [], view: "search",
                 busy: false };
 
 async function api(path, body) {
@@ -139,13 +154,71 @@ async function api(path, body) {
 function say(el, text, kind) { el.textContent = text || ""; el.className = "msg" + (kind ? " " + kind : ""); }
 
 function tile(item) {
+  const cell = document.createElement("div");
+  cell.className = "cell"; cell.dataset.id = item.id;
   const b = document.createElement("button");
   b.type = "button"; b.className = "tile"; b.title = item.title;
+  if (state.selected && state.selected.id === item.id) b.classList.add("sel");
   const img = document.createElement("img");
   img.src = item.thumb; img.alt = item.title; img.loading = "lazy"; img.referrerPolicy = "no-referrer";
   b.append(img);
   b.addEventListener("click", () => choose(item, b));
-  return b;
+  const star = document.createElement("button");
+  star.type = "button"; star.className = "star"; star.dataset.favId = item.id;
+  star.addEventListener("click", (e) => { e.stopPropagation(); toggleFav(item); });
+  cell.append(b, star);
+  paintStar(star, item.id);
+  return cell;
+}
+
+// -- favourites (kept by the server, so every browser shares them) --
+function isFav(id) { return state.favs.some((f) => f.id === id); }
+
+function paintStar(el, id) {
+  const on = isFav(id);
+  el.setAttribute("aria-pressed", on);
+  el.textContent = on ? "★" : "☆";
+  el.title = el.ariaLabel = on ? "Remove from favorites" : "Add to favorites";
+}
+
+function paintStars() {
+  document.querySelectorAll(".star").forEach((s) => paintStar(s, s.dataset.favId));
+  $("favcount").textContent = state.favs.length || "";
+  const sel = $("favsel");
+  sel.disabled = !state.selected;
+  if (state.selected) {
+    const on = isFav(state.selected.id);
+    sel.setAttribute("aria-pressed", on);
+    sel.textContent = on ? "★ In favorites" : "☆ Add to favorites";
+  }
+}
+
+async function loadFavs() {
+  try { state.favs = (await (await api("/giphy/api/favorites")).json()).items; } catch (_) { state.favs = []; }
+  paintStars();
+}
+
+async function toggleFav(item) {
+  const body = isFav(item.id) ? { action: "remove", id: item.id } : { action: "add", item };
+  try {
+    state.favs = (await (await api("/giphy/api/favorites", body)).json()).items;
+  } catch (e) { say($("listmsg"), e.message, "err"); return; }
+  paintStars();
+  if (state.view === "favs") showFavs();
+}
+
+function showFavs() {
+  state.view = "favs";
+  state.searchTicket = (state.searchTicket || 0) + 1;       // drop any search still on its way
+  $("favs").classList.add("toggle-on"); $("favs").setAttribute("aria-pressed", "true");
+  $("grid").replaceChildren(...state.favs.map(tile));
+  $("more").hidden = true;
+  say($("listmsg"), state.favs.length ? "" : "No favorites yet: tap ☆ on a GIF to keep it here.");
+}
+
+function leaveFavs() {
+  state.view = "search";
+  $("favs").classList.remove("toggle-on"); $("favs").setAttribute("aria-pressed", "false");
 }
 
 async function search(append) {
@@ -170,6 +243,7 @@ function choose(item, el) {
   document.querySelectorAll(".tile.sel").forEach((t) => t.classList.remove("sel"));
   el.classList.add("sel");
   state.selected = item;
+  paintStars();
   // On narrow screens the preview sits below the results: bring it into view.
   if (window.matchMedia("(max-width: 900px)").matches) document.querySelector("aside").scrollIntoView({ behavior: "smooth" });
   prepare();
@@ -249,7 +323,9 @@ async function status() {
   } catch (e) { pill.textContent = "aorus-lcd service down"; pill.className = "pill off"; }
 }
 
-$("search").addEventListener("submit", (e) => { e.preventDefault(); state.q = $("q").value.trim(); search(false); });
+$("search").addEventListener("submit", (e) => { e.preventDefault(); leaveFavs(); state.q = $("q").value.trim(); search(false); });
+$("favs").addEventListener("click", () => { if (state.view === "favs") { leaveFavs(); search(false); } else showFavs(); });
+$("favsel").addEventListener("click", () => state.selected && toggleFav(state.selected));
 $("more").addEventListener("click", () => search(true));
 $("send").addEventListener("click", send);
 document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => {
@@ -259,7 +335,7 @@ document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("clic
   if (b.dataset.quality) state.quality = b.dataset.quality;
   prepare();
 }));
-status(); search(false);
+loadFavs(); status(); search(false);
 </script>
 </body>
 </html>

@@ -10,6 +10,7 @@ import urllib.request
 import pytest
 
 from aorus_lcd import render as R
+from aorus_lcd_giphy import favorites as F
 from aorus_lcd_giphy import giphy as G
 from aorus_lcd_giphy import optimize as O
 from aorus_lcd_giphy import server as S
@@ -143,9 +144,10 @@ class FakeDaemon:
 
 
 @pytest.fixture
-def served():
+def served(tmp_path):
     daemon = FakeDaemon()
-    server = S.make_server(G.Giphy("k", opener=FakeGiphyWeb()), daemon, port=0)
+    server = S.make_server(G.Giphy("k", opener=FakeGiphyWeb()), daemon, port=0,
+                           favorites=F.Favorites(tmp_path / "favorites.json"))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{server.server_address[1]}", daemon
     server.shutdown()
@@ -309,3 +311,76 @@ def test_long_gifs_keep_their_speed(quality):
 def test_optimize_rejects_garbage():
     with pytest.raises(ValueError):
         O.optimize(b"GIF89a not really", "contain", "balanced")
+
+
+# -- favourites -------------------------------------------------------------------------
+
+def fav(gif_id="abc123", **kw):
+    return {"id": gif_id, "title": "A cat", "thumb": f"https://media2.giphy.com/media/{gif_id}/100.gif",
+            "width": 100, "height": 100, **kw}
+
+
+def test_favorites_add_remove_and_persist(tmp_path):
+    path = tmp_path / "state" / "favorites.json"
+    favs = F.Favorites(path)
+    favs.add(fav("a1"))
+    favs.add(fav("b2"))
+    favs.add(fav("a1", title="again"))                    # re-adding moves it to the front, once
+    assert [i["id"] for i in F.Favorites(path).list()] == ["a1", "b2"]
+    assert favs.list()[0]["title"] == "again"
+    favs.remove("a1")
+    assert [i["id"] for i in F.Favorites(path).list()] == ["b2"]
+
+
+@pytest.mark.parametrize("item", [fav("../x"), fav(thumb="https://evil.example/x.gif"), fav(thumb="http://media.giphy.com/x.gif"),
+                                  "abc", None])
+def test_favorites_reject_bad_items(tmp_path, item):
+    with pytest.raises(ValueError):
+        F.Favorites(tmp_path / "f.json").add(item)
+
+
+def test_favorites_clean_title_and_size(tmp_path):
+    item = F.Favorites(tmp_path / "f.json").add(fav(title="  a\n" + "x" * 500, width="99999", height=-3))[0]
+    assert item["title"].startswith("a x") and len(item["title"]) == F.MAX_TITLE
+    assert (item["width"], item["height"]) == (4096, 0)
+
+
+def test_favorites_are_capped(tmp_path, monkeypatch):
+    monkeypatch.setattr(F, "MAX_FAVORITES", 2)
+    favs = F.Favorites(tmp_path / "f.json")
+    favs.add(fav("a1")); favs.add(fav("b2"))
+    with pytest.raises(ValueError, match="limited"):
+        favs.add(fav("c3"))
+
+
+def test_unreadable_favorites_file_starts_over(tmp_path):
+    path = tmp_path / "f.json"
+    path.write_text("{not json")
+    favs = F.Favorites(path)
+    assert favs.list() == []
+    favs.add(fav("a1"))
+    assert [i["id"] for i in favs.list()] == ["a1"]
+
+
+def test_favorites_api(served):
+    base, daemon = served
+    code, body, _ = call(base + "/giphy/api/favorites")
+    assert code == 200 and json.loads(body) == {"items": []}
+    code, body, _ = call(base + "/giphy/api/favorites", {"action": "add", "item": fav()}, H)
+    assert code == 200 and json.loads(body)["items"][0]["id"] == "abc123"
+    code, body, _ = call(base + "/giphy/api/favorites")
+    assert [i["id"] for i in json.loads(body)["items"]] == ["abc123"]
+    code, body, _ = call(base + "/giphy/api/favorites", {"action": "remove", "id": "abc123"}, H)
+    assert code == 200 and json.loads(body) == {"items": []}
+    code, _, _ = call(base + "/giphy/api/favorites", {"action": "explode"}, H)
+    assert code == 400
+    code, _, _ = call(base + "/giphy/api/favorites", {"action": "add", "item": fav(thumb="https://evil.example/x")}, H)
+    assert code == 400
+    assert not daemon.calls                                # favourites never touch the service
+
+
+def test_favorites_need_the_api_header(served):
+    base, _ = served
+    code, _, _ = call(base + "/giphy/api/favorites", {"action": "add", "item": fav()},
+                      {"Content-Type": "application/json"})
+    assert code == 403

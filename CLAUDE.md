@@ -26,6 +26,9 @@ Trampas que no hay que deshacer:
   daemon (`/api/media`, `/api/preview`, `/api/content`). La clave es el secreto de podman
   `giphy_api_key`; nunca en git, en la imagen ni en el navegador. Descargas solo por id y solo
   de `https://*.giphy.com`.
+- Favoritos de GIPHY: `aorus_lcd_giphy/favorites.py`, en el volumen `aorus-lcd-giphy-state`
+  (`STATE_DIRECTORY=/var/lib/aorus-lcd-giphy`, creado en la imagen con dueño `lcd`). Solo id,
+  título y URL de miniatura de `*.giphy.com`; nunca el GIF.
 - El panel no permite leer la imagen que muestra: la vista previa solo refleja lo subido desde
   la interfaz.
 - El RGB (`0x75`) dio NACK al activarlo el 07/11/2026 (estático rojo). Sin diagnosticar: no

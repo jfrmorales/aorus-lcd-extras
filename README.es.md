@@ -152,7 +152,7 @@ por la API local del servicio `aorus-lcd`, que sigue siendo el dueño del panel 
 de bus. La dirección propia del servicio (`:5090`) sigue funcionando.
 
 <p align="center"><img src="docs/img/ui-mobile.png" width="620"
-  alt="La página de GIPHY en el móvil: resultados y, después, la vista previa con ajuste y calidad"></p>
+  alt="La página de GIPHY en el móvil: resultados con estrellas de favoritos y, después, la vista previa con ajuste, calidad y favoritos"></p>
 
 Consigue una clave de **API** (no de SDK) en [developers.giphy.com](https://developers.giphy.com/),
 guárdala como secreto de podman y arranca la unidad, que usa la misma imagen:
@@ -167,6 +167,14 @@ Con compose, pon `GIPHY_API_KEY=...` en un fichero `.env` (ignorado por git). La
 en el servidor: el navegador solo ve ids de GIF y URLs de medios de GIPHY, y las descargas se
 limitan a `https://*.giphy.com`. `GIPHY_RATING` (`g`, `pg`, `pg-13`, `r`; por defecto `pg`) y
 `GIPHY_LANG` (por defecto `es`) ajustan la búsqueda.
+
+### Favoritos
+
+Pulsa ☆ en cualquier GIF, o *Add to favorites* bajo la vista previa, para guardarlo; **★
+Favorites**, junto a la búsqueda, los muestra listos para volver a enviarlos. Se guardan en el
+servidor, en el volumen `aorus-lcd-giphy-state`, así que todos los navegadores ven la misma
+lista. Solo se guarda el id de GIPHY, el título y la URL de la miniatura: el GIF se vuelve a
+pedir a GIPHY al enviarlo.
 
 ### Llenar la pantalla
 
