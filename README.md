@@ -141,10 +141,12 @@ keeps a flash and the service apart, but stop the service before flashing anyway
 
 ## GIPHY
 
-`aorus-lcd-giphy` serves a page at `http://127.0.0.1:5091/`: search GIPHY (empty search =
-trending), pick a GIF, check the preview at the panel's 320×170 and colour depth along with the
-upload estimate, and send it. It never touches the bus: it hands the GIF to the `aorus-lcd`
-service's local API, which keeps owning the panel and its bus lock.
+`aorus-lcd-giphy` gives the panel **one address, `http://127.0.0.1:5091/`**, with a *Panel ·
+GIPHY* bar on top. *Panel* is `aorus-lcd`'s own UI, served through it unchanged, and `/api/` is
+forwarded to the service. *GIPHY* (`/giphy`) searches GIPHY (empty search = trending), shows
+the GIF at the panel's 320×170 and colour depth with the upload estimate, and sends it. It
+never touches the bus: everything goes through the `aorus-lcd` service's local API, which
+keeps owning the panel and its bus lock. The service's own address (`:5090`) still works.
 
 Get an **API** key (not an SDK key) at [developers.giphy.com](https://developers.giphy.com/),
 then store it as a podman secret and start the unit; it runs from the same image:

@@ -74,7 +74,7 @@
     <div class="muted">Pick a GIF and send it to the panel</div>
   </div>
   <div class="grow"></div>
-  <a id="mainui" href="http://127.0.0.1:5090/">Panel settings</a>
+  <!--nav-->
   <span id="pill" class="pill">service…</span>
 </header>
 <main>
@@ -147,7 +147,7 @@ async function search(append) {
   say($("listmsg"), "Loading…");
   try {
     const params = new URLSearchParams({ q: state.q, offset: state.offset });
-    const data = await (await api("/api/search?" + params)).json();
+    const data = await (await api("/giphy/api/search?" + params)).json();
     data.items.forEach((it) => $("grid").append(tile(it)));
     state.offset += data.items.length;
     $("more").hidden = !data.items.length || state.offset >= data.total;
@@ -173,7 +173,7 @@ async function prepare() {
   $("meta").textContent = "Preparing the GIF for the panel…";
   $("meta").classList.remove("slow");
   try {
-    const media = await (await api("/api/prepare", { id: item.id, fit: state.fit, quality: state.quality })).json();
+    const media = await (await api("/giphy/api/prepare", { id: item.id, fit: state.fit, quality: state.quality })).json();
     if (ticket !== state.ticket) return;
     state.media = media;
     await refreshPreview(ticket);
@@ -184,7 +184,7 @@ async function refreshPreview(ticket) {
   if (!state.media) return;
   $("meta").textContent = "Rendering for the panel…";
   try {
-    const r = await api("/api/preview", { source: state.media.source });
+    const r = await api("/api/preview", { content: gifContent() });
     const secs = parseFloat(r.headers.get("X-Estimate-Seconds") || "0");
     const blob = await r.blob();
     if (ticket !== state.ticket) return;
@@ -201,6 +201,9 @@ async function refreshPreview(ticket) {
   } catch (e) { $("meta").textContent = ""; say($("msg"), e.message, "err"); }
 }
 
+// The prepared GIF is already 320x170: the service's own fit has nothing left to do.
+function gifContent() { return { type: "gif", source: state.media.source, fit: "contain", background: "#000000" }; }
+
 function fmt(s) { return s < 90 ? `${Math.round(s)} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`; }
 
 async function send() {
@@ -209,7 +212,7 @@ async function send() {
   $("progress").hidden = false; $("progress").firstElementChild.style.width = "0";
   say($("msg"), "Uploading… do not close the service.");
   try {
-    await api("/api/send", { source: state.media.source });
+    await api("/api/content", { content: gifContent() });
     for (;;) {
       await new Promise((r) => setTimeout(r, 700));
       const s = await (await api("/api/status")).json();
@@ -244,7 +247,6 @@ document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("clic
   if (b.dataset.quality) state.quality = b.dataset.quality;
   prepare();
 }));
-$("mainui").href = `${location.protocol}//${location.hostname}:5090/`;
 status(); search(false);
 </script>
 </body>

@@ -1,8 +1,13 @@
-"""aorus-lcd-giphy: a local page to search GIPHY and send a GIF to the AORUS LCD.
+"""aorus-lcd-giphy: one address for the AORUS LCD: aorus-lcd's panel UI plus a GIPHY page.
 
-It does not talk to the panel itself: it hands the GIF to the aorus-lcd
-service over its local API (/api/media, /api/preview, /api/content), so the
-service keeps owning the bus, the upload pacing and its bus lock.
+  /            aorus-lcd's own web UI, proxied, with a nav bar added
+  /giphy       search GIPHY and send a GIF to the panel
+  /api/...     forwarded verbatim to the aorus-lcd service
+  /giphy/api/  search and prepare (download + optimize) a GIF
+
+It does not talk to the panel itself: everything goes through the aorus-lcd
+service's local API, so the service keeps owning the bus, the upload pacing
+and its bus lock.
 
 Same protection model as aorus-lcd's own UI: loopback only, the Host header
 must be the loopback address (DNS rebinding), and every POST carries an
@@ -25,6 +30,13 @@ from .giphy import RATINGS, Giphy, GiphyError
 from .optimize import FITS, QUALITIES, optimize
 
 API_HEADER = "X-Aorus-Lcd"
+FORWARD_REQUEST = ("Content-Type", "X-Filename", API_HEADER)
+FORWARD_RESPONSE = ("Content-Type", "X-Estimate-Seconds")
+MAX_FORWARD = 33 << 20                     # aorus-lcd's own upload limit is 32 MB
+NAV_STYLE = (b"<style>.xnav{display:flex;gap:4px;background:#1a1a1f;border:1px solid #26262d;"
+             b"border-radius:11px;padding:3px}.xnav a{color:#8b8b96;text-decoration:none;padding:6px 14px;"
+             b"border-radius:8px;font-size:13px}.xnav a[aria-current]{background:#131316;color:#ececf1;"
+             b"box-shadow:0 0 0 1px #26262d}</style>")
 log = logging.getLogger("aorus-lcd-giphy")
 
 
@@ -56,33 +68,49 @@ class Daemon:
         except OSError as e:
             raise DaemonError(503, f"aorus-lcd service not reachable at {self.url} ({e})") from None
 
-    def _post_json(self, path, data):
-        return self._call(path, json.dumps(data).encode(), {"Content-Type": "application/json"})
-
-    def status(self):
-        return json.loads(self._call("/api/status")[0])
-
     def save_media(self, filename, data):
         return json.loads(self._call("/api/media", data, {"X-Filename": filename})[0])
 
-    def preview(self, content):
-        body, headers = self._post_json("/api/preview", {"content": content})
-        return body, headers.get("Content-Type", "image/gif"), float(headers.get("X-Estimate-Seconds") or 0)
+    def page(self):
+        req = urllib.request.Request(self.url + "/")
+        try:
+            with self.open(req, timeout=self.timeout) as r:
+                return r.read()
+        except OSError as e:
+            raise DaemonError(503, f"aorus-lcd service not reachable at {self.url} ({e})") from None
 
-    def send(self, content):
-        return json.loads(self._post_json("/api/content", {"content": content})[0])
+    def forward(self, method, path, body, headers):
+        """(status, headers, body) of the service's answer, errors included."""
+        req = urllib.request.Request(self.url + path, data=body, headers=headers, method=method)
+        try:
+            with self.open(req, timeout=self.timeout) as r:
+                return r.status, r.headers, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers, e.read()
+        except OSError as e:
+            body = json.dumps({"error": f"aorus-lcd service not reachable at {self.url} ({e})"}).encode()
+            return 503, {"Content-Type": "application/json"}, body
 
 
-def _page():
-    return resources.files("aorus_lcd_giphy").joinpath("static/index.html").read_bytes()
+def nav(current):
+    links = [("/", "Panel"), ("/giphy", "GIPHY")]
+    return ('<nav class="xnav" aria-label="Sections">' + "".join(
+        f'<a href="{href}"{" aria-current=page" if href == current else ""}>{label}</a>'
+        for href, label in links) + "</nav>").encode()
 
 
-def _content(data):
-    """The prepared GIF is already 320x170, so the service's own fit is a no-op."""
-    source = str(data.get("source", ""))
-    if not source:
-        raise ValueError("missing source")
-    return {"type": "gif", "source": source, "fit": "contain", "background": "#000000"}
+def panel_page(html):
+    """aorus-lcd's page with the nav bar in its header (or on top, if its markup changed)."""
+    html = html.replace(b"</head>", NAV_STYLE + b"</head>", 1)
+    marker = b'<div class="grow"></div>'
+    if marker in html:
+        return html.replace(marker, marker + nav("/"), 1)
+    return html.replace(b"<body>", b'<body><div style="padding:8px 24px">' + nav("/") + b"</div>", 1)
+
+
+def giphy_page():
+    html = resources.files("aorus_lcd_giphy").joinpath("static/index.html").read_bytes()
+    return html.replace(b"</head>", NAV_STYLE + b"</head>", 1).replace(b"<!--nav-->", nav("/giphy"), 1)
 
 
 class Downloads:
@@ -164,33 +192,42 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, TypeError) as e:
             self._send(400, {"error": str(e)})
 
+    def _forward(self, method):
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > MAX_FORWARD:
+            return self._send(413, {"error": "upload too large"})
+        body = self.rfile.read(length) if method == "POST" else None
+        headers = {k: self.headers[k] for k in FORWARD_REQUEST if self.headers.get(k) is not None}
+        code, rh, data = self.daemon.forward(method, self.path, body, headers)
+        extra = {k: rh.get(k) for k in FORWARD_RESPONSE[1:] if rh.get(k)}
+        self._send(code, data, rh.get("Content-Type") or "application/octet-stream", extra)
+
     def do_GET(self):
         if not self._allowed_host():
             return self._send(403, {"error": "forbidden host"})
         url = urllib.parse.urlsplit(self.path)
         query = dict(urllib.parse.parse_qsl(url.query))
         if url.path in ("/", "/index.html"):
-            return self._send(200, _page(), "text/html; charset=utf-8")
-        if url.path == "/api/search":
+            return self._guard(lambda: self._send(200, panel_page(self.daemon.page()), "text/html; charset=utf-8"))
+        if url.path in ("/giphy", "/giphy/"):
+            return self._send(200, giphy_page(), "text/html; charset=utf-8")
+        if url.path == "/giphy/api/search":
             return self._guard(lambda: self._send(200, self.giphy.search(query.get("q", ""),
                                                                          int(query.get("offset", 0)))))
-        if url.path == "/api/status":
-            return self._guard(lambda: self._send(200, self.daemon.status()))
+        if url.path.startswith("/api/"):
+            return self._forward("GET")
         self._send(404, {"error": "not found"})
 
     def do_POST(self):
         if not self._allowed_host() or self.headers.get(API_HEADER) != "1":
             return self._send(403, {"error": "forbidden"})
+        if self.path.startswith("/api/"):
+            return self._forward("POST")
 
         def route():
             data = self._json()
-            if self.path == "/api/prepare":
+            if self.path == "/giphy/api/prepare":
                 return self._send(200, prepare(self.downloads, self.daemon, data))
-            if self.path == "/api/preview":
-                image, mime, seconds = self.daemon.preview(_content(data))
-                return self._send(200, image, mime, {"X-Estimate-Seconds": f"{seconds:.1f}"})
-            if self.path == "/api/send":
-                return self._send(202, self.daemon.send(_content(data)))
             return self._send(404, {"error": "not found"})
         self._guard(route)
 
@@ -227,7 +264,8 @@ def main(argv=None):
     except GiphyError as e:
         raise SystemExit(str(e))
     server = make_server(giphy, Daemon(args.daemon), args.bind, args.port)
-    log.info("GIPHY page: http://%s:%d/ (aorus-lcd service at %s)", args.bind, args.port, args.daemon)
+    log.info("AORUS LCD: http://%s:%d/ (panel) and /giphy (aorus-lcd service at %s)",
+             args.bind, args.port, args.daemon)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

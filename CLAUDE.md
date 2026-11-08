@@ -20,7 +20,9 @@ Trampas que no hay que deshacer:
   es un socket Unix abstracto, que depende del namespace de red. Sin ella, flash y servicio
   escribirían a la vez (probado el 07/11/2026). También `label=disable` y CDI
   `nvidia.com/gpu=all`.
-- GIPHY (`aorus_lcd_giphy`, 127.0.0.1:5091) nunca toca el bus: pasa por la API local del
+- `aorus_lcd_giphy` (127.0.0.1:5091) es la dirección única: `/` sirve la interfaz de
+  `aorus-lcd` reenviada con una barra Panel · GIPHY inyectada (si cambia su HTML, cae a una
+  barra arriba), `/api/*` se reenvía tal cual y `/giphy` es la página de GIPHY. Nunca toca el bus: pasa por la API local del
   daemon (`/api/media`, `/api/preview`, `/api/content`). La clave es el secreto de podman
   `giphy_api_key`; nunca en git, en la imagen ni en el navegador. Descargas solo por id y solo
   de `https://*.giphy.com`.

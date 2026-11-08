@@ -116,24 +116,30 @@ def test_requires_a_key():
         G.Giphy("")
 
 
+UPSTREAM = (b'<!doctype html><html><head><title>AORUS LCD</title></head><body><header><div>AORUS</div>'
+            b'<div class="grow"></div><span class="pill">x</span></header><main>panel</main></body></html>')
+
+
 class FakeDaemon:
+    """The aorus-lcd service: its page, /api/media for prepare, and a forward log."""
+
     def __init__(self):
         self.calls = []
 
-    def status(self):
-        return {"panel": {"connected": True, "firmware": "1.3"}, "job": {"state": "idle"}}
+    def page(self):
+        return UPSTREAM
 
     def save_media(self, name, data):
         self.calls.append(("media", name, len(data)))
         return {"source": f"/var/lib/aorus-lcd/media/{name}", "frames": 2}
 
-    def preview(self, content):
-        self.calls.append(("preview", content))
-        return b"GIF89a", "image/gif", 12.5
-
-    def send(self, content):
-        self.calls.append(("send", content))
-        return {"ok": True}
+    def forward(self, method, path, body, headers):
+        self.calls.append(("forward", method, path, body, dict(headers)))
+        if path == "/api/preview":
+            return 200, {"Content-Type": "image/gif", "X-Estimate-Seconds": "12.5"}, b"GIF89a"
+        if path == "/api/content":
+            return 409, {"Content-Type": "application/json"}, b'{"error": "an upload is already running"}'
+        return 200, {"Content-Type": "application/json"}, b'{"panel": {"connected": true}}'
 
 
 @pytest.fixture
@@ -146,9 +152,9 @@ def served():
     server.server_close()
 
 
-def call(url, body=None, headers=None):
-    req = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(),
-                                 headers=headers or {}, method="GET" if body is None else "POST")
+def call(url, body=None, headers=None, raw=None):
+    data = raw if raw is not None else (None if body is None else json.dumps(body).encode())
+    req = urllib.request.Request(url, data=data, headers=headers or {}, method="GET" if data is None else "POST")
     try:
         with urllib.request.urlopen(req, timeout=5) as r:
             return r.status, r.read(), r.headers
@@ -156,47 +162,79 @@ def call(url, body=None, headers=None):
         return e.code, e.read(), e.headers
 
 
-def test_page_and_search(served):
+H = {"X-Aorus-Lcd": "1", "Content-Type": "application/json"}
+
+
+def test_root_is_the_panel_ui_with_the_nav(served):
     base, _ = served
-    code, body, headers = call(base + "/")
+    code, body, _ = call(base + "/")
+    assert code == 200 and b"<main>panel</main>" in body
+    assert b'<div class="grow"></div><nav class="xnav"' in body
+    assert b'<a href="/" aria-current=page>Panel</a><a href="/giphy">GIPHY</a>' in body
+
+
+def test_nav_falls_back_to_the_top_if_the_markup_changes():
+    out = S.panel_page(b"<html><head></head><body><p>new ui</p></body></html>")
+    assert out.index(b'class="xnav"') < out.index(b"new ui")
+
+
+def test_giphy_page_and_search(served):
+    base, _ = served
+    code, body, headers = call(base + "/giphy")
     assert code == 200 and b"Powered by" in body
+    assert b'<a href="/">Panel</a><a href="/giphy" aria-current=page>GIPHY</a>' in body
     assert "https://*.giphy.com" in headers["Content-Security-Policy"]
-    code, body, _ = call(base + "/api/search?q=cat")
+    code, body, _ = call(base + "/giphy/api/search?q=cat")
     assert code == 200 and json.loads(body)["items"][0]["id"] == "abc123"
+
+
+def test_api_is_forwarded_verbatim(served):
+    base, daemon = served
+    code, body, headers = call(base + "/api/preview", {"content": {"type": "gif"}}, H)
+    assert code == 200 and body == b"GIF89a" and headers["X-Estimate-Seconds"] == "12.5"
+    method, path, sent, fwd = daemon.calls[-1][1:]
+    assert (method, path, json.loads(sent)) == ("POST", "/api/preview", {"content": {"type": "gif"}})
+    assert fwd["X-Aorus-Lcd"] == "1"
+    code, body, _ = call(base + "/api/content", {"content": {}}, H)
+    assert code == 409 and b"already running" in body          # the service's errors pass through
+    code, _, _ = call(base + "/api/status")
+    assert code == 200 and daemon.calls[-1][1:3] == ("GET", "/api/status")
+
+
+def test_media_upload_keeps_its_filename(served):
+    base, daemon = served
+    call(base + "/api/media", raw=b"GIF89a...", headers={"X-Aorus-Lcd": "1", "X-Filename": "cat.gif"})
+    assert daemon.calls[-1][4]["X-Filename"] == "cat.gif" and daemon.calls[-1][3] == b"GIF89a..."
 
 
 def test_post_needs_the_api_header(served):
     base, daemon = served
-    code, _, _ = call(base + "/api/send", {"source": "/x.gif"})
-    assert code == 403 and not daemon.calls
+    for path in ("/api/content", "/giphy/api/prepare"):
+        code, _, _ = call(base + path, {"content": {}}, {"Content-Type": "application/json"})
+        assert code == 403
+    assert not daemon.calls
 
 
 def test_rejects_foreign_host_header(served):
-    base, _ = served
-    code, _, _ = call(base + "/", headers={"Host": "evil.example"})
-    assert code == 403
-
-
-def test_prepare_preview_send(served):
     base, daemon = served
-    h = {"X-Aorus-Lcd": "1", "Content-Type": "application/json"}
-    code, body, _ = call(base + "/api/prepare", {"id": "abc123", "fit": "cover", "quality": "fast"}, h)
+    for path in ("/", "/api/status"):
+        code, _, _ = call(base + path, headers={"Host": "evil.example"})
+        assert code == 403
+    assert not daemon.calls
+
+
+def test_prepare(served):
+    base, daemon = served
+    code, body, _ = call(base + "/giphy/api/prepare", {"id": "abc123", "fit": "cover", "quality": "fast"}, H)
     media = json.loads(body)
-    source = media["source"]
     assert code == 200 and media["frames"] == 6 and media["fit"] == "cover"
     assert daemon.calls[0][:2] == ("media", "giphy-abc123-cover-fast.gif")
-    code, body, headers = call(base + "/api/preview", {"source": source}, h)
-    assert code == 200 and headers["X-Estimate-Seconds"] == "12.5"
-    code, _, _ = call(base + "/api/send", {"source": source}, h)
-    assert code == 202
-    assert daemon.calls[-1] == ("send", {"type": "gif", "source": source, "fit": "contain",
-                                         "background": "#000000"})
 
 
 @pytest.mark.parametrize("body", [{"id": "abc123", "fit": "stretch"}, {"id": "abc123", "quality": "ultra"}])
 def test_prepare_rejects_bad_options(served, body):
     base, daemon = served
-    code, _, _ = call(base + "/api/prepare", body, {"X-Aorus-Lcd": "1", "Content-Type": "application/json"})
+    code, _, _ = call(base + "/giphy/api/prepare", body, H)
     assert code == 400 and not daemon.calls
 
 

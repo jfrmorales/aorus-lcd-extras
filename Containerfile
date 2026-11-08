@@ -1,5 +1,5 @@
 # The aorus-lcd service (web UI on 127.0.0.1:5090 + live GPU stats) in a container.
-# The same image runs the GIPHY page (`--entrypoint aorus-lcd-giphy`, 127.0.0.1:5091).
+# The same image runs the single front page, panel UI + GIPHY (`--entrypoint aorus-lcd-giphy`, 127.0.0.1:5091).
 # Flashing stays on the host: see "Run the panel service in a container" in README.md.
 #
 #   podman build -t localhost/aorus-lcd -f Containerfile .

@@ -134,11 +134,13 @@ servicio antes de flashear: `systemctl --user stop aorus-lcd` o `podman compose 
 
 ## GIPHY
 
-`aorus-lcd-giphy` sirve una página en `http://127.0.0.1:5091/`: buscas en GIPHY (con la
-búsqueda vacía salen las tendencias), eliges un GIF, ves la vista previa a la resolución
-(320×170) y profundidad de color del panel junto con el tiempo estimado de subida, y lo envías.
-No toca el bus: pasa el GIF a la API local del servicio `aorus-lcd`, que sigue siendo el dueño
-del panel y de su bloqueo de bus.
+`aorus-lcd-giphy` da al panel **una sola dirección, `http://127.0.0.1:5091/`**, con una barra
+*Panel · GIPHY* arriba. *Panel* es la interfaz del propio `aorus-lcd`, servida a través de él
+sin cambios, y `/api/` se reenvía al servicio. *GIPHY* (`/giphy`) busca en GIPHY (con la
+búsqueda vacía salen las tendencias), muestra el GIF a la resolución (320×170) y profundidad de
+color del panel junto con el tiempo estimado de subida, y lo envía. No toca el bus: todo pasa
+por la API local del servicio `aorus-lcd`, que sigue siendo el dueño del panel y de su bloqueo
+de bus. La dirección propia del servicio (`:5090`) sigue funcionando.
 
 Consigue una clave de **API** (no de SDK) en [developers.giphy.com](https://developers.giphy.com/),
 guárdala como secreto de podman y arranca la unidad, que usa la misma imagen:
