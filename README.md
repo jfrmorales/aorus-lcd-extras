@@ -11,6 +11,8 @@ Add-ons for [`aorus-lcd`](https://github.com/c-drew/gigabyte-aorus-lcd-linux), w
 - **`aorus-lcd-giphy`**: a page to search GIPHY and send a GIF to the panel
   ([GIPHY](#giphy)).
 
+![The GIPHY page: search results, and the selected GIF as the panel will show it](docs/img/ui-giphy.png)
+
 ## Firmware update
 
 Update the firmware of the **LCD Edge View** side screen on a Gigabyte **AORUS GeForce RTX 5090
@@ -115,6 +117,8 @@ text, built-in stat screens), the GPU-stats overlay and the card's RGB. This rep
 run it as a rootless container, served at `http://127.0.0.1:5090/` and nowhere else. Flashing
 stays on the host: it is a one-off command, and a container restart must never cut it short.
 
+![How the pieces fit: browser, the 5091 front page, the aorus-lcd service, NVIDIA RM and the LCD](docs/img/architecture-en.svg)
+
 Needs podman (or docker) and the NVIDIA Container Toolkit's CDI spec
 (`nvidia-ctk cdi generate`), which provides the NVIDIA devices and a `libnvidia-ml` matching
 the running driver for the overlay's live stats.
@@ -139,6 +143,11 @@ file, mount it at `/etc/aorus-lcd/config.toml` (see the commented line). The bus
 keeps a flash and the service apart, but stop the service before flashing anyway:
 `systemctl --user stop aorus-lcd` or `podman compose down`.
 
+The panel UI as served at `http://127.0.0.1:5091/` (see [GIPHY](#giphy)), with the *Panel ·
+GIPHY* bar in its header. The preview here is a text, rendered without sending anything:
+
+![aorus-lcd's panel UI with live GPU stats, a text preview and the Panel · GIPHY bar](docs/img/ui-panel.png)
+
 ## GIPHY
 
 `aorus-lcd-giphy` gives the panel **one address, `http://127.0.0.1:5091/`**, with a *Panel ·
@@ -147,6 +156,9 @@ forwarded to the service. *GIPHY* (`/giphy`) searches GIPHY (empty search = tren
 the GIF at the panel's 320×170 and colour depth with the upload estimate, and sends it. It
 never touches the bus: everything goes through the `aorus-lcd` service's local API, which
 keeps owning the panel and its bus lock. The service's own address (`:5090`) still works.
+
+<p align="center"><img src="docs/img/ui-mobile.png" width="620"
+  alt="The GIPHY page on a phone: search results, then the panel preview with fit and quality"></p>
 
 Get an **API** key (not an SDK key) at [developers.giphy.com](https://developers.giphy.com/),
 then store it as a podman secret and start the unit; it runs from the same image:
@@ -162,19 +174,49 @@ server; the browser only sees GIF ids and GIPHY media URLs, and downloads are li
 `https://*.giphy.com`. `GIPHY_RATING` (`g`, `pg`, `pg-13`, `r`; default `pg`) and `GIPHY_LANG`
 (default `es`) tune the search.
 
-Uploads move at ~15 KB/s, and the panel's RLE barely compresses photographic, dithered GIFs:
-sent as is, a 100-frame GIPHY result takes 8 minutes. So the page prepares each GIF first,
-scaled to 320×170 on the server, and the preview shows exactly what will be sent:
+### Filling the screen
+
+GIFs are usually square or 16:9; the panel is almost 2:1. **Auto** (the default) crops when
+that loses at most 20% of the picture, which is the case for most wide GIFs. Otherwise it shows
+the whole GIF over a blurred, darkened, enlarged copy of itself: no bars and no stretching, at
+about the same upload cost. *Whole* and *Crop* are there when you want one or the other.
+
+![A square GIF on the panel: whole with bars, Auto with a blurred background, and cropped](docs/img/fit-en.png)
+
+### Upload time and quality
+
+Uploads move at ~15 KB/s (256-byte writes, paced, plus flash erases), and the panel's RLE only
+shrinks runs of identical pixels, which photographic, dithered GIFs hardly have: sent as is, a
+100-frame GIPHY result takes 8 minutes. So each GIF is prepared on the server first, and the
+preview shows exactly what will be sent:
+
+- fewer frames, spread over the whole GIF so it keeps its length;
+- a median filter that removes the dither noise breaking RLE runs;
+- a small palette without dithering, so flat areas become runs.
+
+![The same GIF in Original, Balanced and Fast, with frame counts and upload times](docs/img/quality-en.png)
 
 | Quality | Frames | Colours | Measured on 6 GIPHY results |
 |---|---|---|---|
-| Fast | 12 | 16, median filter 5 | 16-35 s |
-| **Balanced** (default) | 20 | 32, median filter 3 | 33-88 s |
+| Fast | 12 or more | 16, median filter 5 | 15-73 s |
+| **Balanced** (default) | 20 or more | 32, median filter 3 | 27-113 s |
 | Original | all | full | 1-8 min |
 
-Fewer frames are spread over the whole GIF so it keeps its length. The median filter removes
-the dither noise that breaks RLE runs, and the palette is reduced without dithering. The page
-warns when an upload would take more than 2 minutes.
+The page warns when an upload would take more than 2 minutes. This is what the panel plays for
+the example above, at Balanced (20 frames, 2× zoom):
+
+<p align="center"><img src="docs/img/panel-preview.gif" width="560"
+  alt="Animated preview of the GIF as the panel plays it"></p>
+
+### What the panel does with a GIF
+
+Two firmware quirks, seen on the panel (LCD firmware 1.3), that the preparation works around:
+
+- **It never shows the first frame**: the loop starts at, and goes back to, frame 1. A black
+  frame goes first; RLE packs it into a few bytes.
+- **One delay for every frame, in ms, in one byte**: 255 ms at most. A slower frame would be
+  cut short and the GIF would play too fast, so a GIF keeps as many frames as it needs to stay
+  at or under 250 ms each. That is why "or more" in the table: long GIFs cost more.
 
 ## Safety
 

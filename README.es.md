@@ -12,6 +12,8 @@ desde Linux la pantalla lateral **LCD Edge View**:
 - **`aorus-lcd-giphy`**: una página para buscar en GIPHY y enviar un GIF al panel
   ([GIPHY](#giphy)).
 
+![La página de GIPHY: resultados de búsqueda y el GIF elegido tal como lo mostrará el panel](docs/img/ui-giphy.png)
+
 ## Actualización de firmware
 
 Actualiza desde Linux el firmware de la pantalla lateral **LCD Edge View** de una Gigabyte
@@ -106,6 +108,8 @@ contenedor rootless, servido en `http://127.0.0.1:5090/` y en ningún otro sitio
 queda en el host: es un comando de un solo uso, y un reinicio del contenedor nunca debe
 cortarlo a medias.
 
+![Cómo encajan las piezas: navegador, la página de 5091, el servicio aorus-lcd, NVIDIA RM y el LCD](docs/img/architecture-es.svg)
+
 Necesita podman (o docker) y la especificación CDI del NVIDIA Container Toolkit
 (`nvidia-ctk cdi generate`), que aporta los dispositivos de NVIDIA y una `libnvidia-ml` acorde
 con el driver en uso, necesaria para las estadísticas en vivo del overlay.
@@ -132,6 +136,11 @@ Para partir de un fichero de configuración, móntalo en `/etc/aorus-lcd/config.
 línea comentada). El bloqueo de bus ya separa el flasheo del servicio, pero aun así para el
 servicio antes de flashear: `systemctl --user stop aorus-lcd` o `podman compose down`.
 
+La interfaz del panel tal como se sirve en `http://127.0.0.1:5091/` (ver [GIPHY](#giphy)), con
+la barra *Panel · GIPHY* en la cabecera. La vista previa es un texto, generado sin enviar nada:
+
+![Interfaz del panel de aorus-lcd con estadísticas de la GPU en vivo, vista previa de un texto y la barra Panel · GIPHY](docs/img/ui-panel.png)
+
 ## GIPHY
 
 `aorus-lcd-giphy` da al panel **una sola dirección, `http://127.0.0.1:5091/`**, con una barra
@@ -141,6 +150,9 @@ búsqueda vacía salen las tendencias), muestra el GIF a la resolución (320×17
 color del panel junto con el tiempo estimado de subida, y lo envía. No toca el bus: todo pasa
 por la API local del servicio `aorus-lcd`, que sigue siendo el dueño del panel y de su bloqueo
 de bus. La dirección propia del servicio (`:5090`) sigue funcionando.
+
+<p align="center"><img src="docs/img/ui-mobile.png" width="620"
+  alt="La página de GIPHY en el móvil: resultados y, después, la vista previa con ajuste y calidad"></p>
 
 Consigue una clave de **API** (no de SDK) en [developers.giphy.com](https://developers.giphy.com/),
 guárdala como secreto de podman y arranca la unidad, que usa la misma imagen:
@@ -156,20 +168,52 @@ en el servidor: el navegador solo ve ids de GIF y URLs de medios de GIPHY, y las
 limitan a `https://*.giphy.com`. `GIPHY_RATING` (`g`, `pg`, `pg-13`, `r`; por defecto `pg`) y
 `GIPHY_LANG` (por defecto `es`) ajustan la búsqueda.
 
-Las subidas van a unos 15 KB/s, y el RLE del panel apenas comprime GIF fotográficos con
-*dithering*: tal cual, un resultado de GIPHY de 100 fotogramas tarda 8 minutos. Por eso la
-página prepara antes cada GIF, escalado a 320×170 en el servidor, y la vista previa muestra
+### Llenar la pantalla
+
+Los GIF suelen ser cuadrados o 16:9, y el panel es casi 2:1. **Auto** (por defecto) recorta
+cuando eso quita como mucho un 20 % de la imagen, que es lo normal en los GIF apaisados. Si no,
+muestra el GIF entero sobre una copia suya ampliada, difuminada y oscurecida: sin bandas y sin
+deformar, con casi el mismo coste de subida. *Whole* (entero) y *Crop* (recortar) siguen ahí
+para cuando quieras uno u otro.
+
+![Un GIF cuadrado en el panel: entero con bandas, Auto con fondo difuminado y recortado](docs/img/fit-es.png)
+
+### Tiempo de subida y calidad
+
+Las subidas van a unos 15 KB/s (escrituras de 256 bytes con pausas, más el borrado de flash), y
+el RLE del panel solo comprime tramos de píxeles iguales, que casi no existen en un GIF
+fotográfico con *dithering*: tal cual, un resultado de GIPHY de 100 fotogramas tarda 8
+minutos. Por eso cada GIF se prepara antes en el servidor, y la vista previa muestra
 exactamente lo que se enviará:
+
+- menos fotogramas, repartidos por todo el GIF para que mantenga su duración;
+- un filtro de mediana que quita el ruido de *dithering* que rompe los tramos del RLE;
+- una paleta reducida sin *dithering*, para que las zonas planas formen tramos.
+
+![El mismo GIF en Original, Balanced y Fast, con fotogramas y tiempo de subida](docs/img/quality-es.png)
 
 | Calidad | Fotogramas | Colores | Medido en 6 resultados de GIPHY |
 |---|---|---|---|
-| Rápido | 12 | 16, filtro de mediana 5 | 16-35 s |
-| **Equilibrado** (por defecto) | 20 | 32, filtro de mediana 3 | 33-88 s |
+| Rápido (*Fast*) | 12 o más | 16, filtro de mediana 5 | 15-73 s |
+| **Equilibrado** (*Balanced*, por defecto) | 20 o más | 32, filtro de mediana 3 | 27-113 s |
 | Original | todos | todos | 1-8 min |
 
-Los fotogramas que se conservan se reparten por todo el GIF, que mantiene su duración. El
-filtro de mediana quita el ruido de *dithering* que rompe los tramos del RLE, y la paleta se
-reduce sin *dithering*. La página avisa si una subida va a pasar de 2 minutos.
+La página avisa si una subida va a pasar de 2 minutos. Esto es lo que reproduce el panel con el
+ejemplo de arriba en Equilibrado (20 fotogramas, ampliado 2×):
+
+<p align="center"><img src="docs/img/panel-preview.gif" width="560"
+  alt="Vista previa animada del GIF tal como lo reproduce el panel"></p>
+
+### Qué hace el panel con un GIF
+
+Dos manías del firmware, vistas en el panel (firmware LCD 1.3), que la preparación esquiva:
+
+- **Nunca muestra el primer fotograma**: el bucle empieza en el fotograma 1 y vuelve a él. Por
+  eso va delante un fotograma negro, que en RLE ocupa unos pocos bytes.
+- **Un único retardo para todos los fotogramas, en ms y en un byte**: 255 ms como mucho. Un
+  fotograma más lento se acortaría y el GIF iría acelerado, así que se conservan los
+  fotogramas necesarios para que ninguno pase de 250 ms. De ahí el "o más" de la tabla: los GIF
+  largos cuestan más.
 
 ## Seguridad
 

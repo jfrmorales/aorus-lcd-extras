@@ -30,7 +30,13 @@
   .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
   .card h2 { margin: 0 0 14px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
   .sticky { position: sticky; top: 76px; align-self: start; }
-  @media (max-width: 900px) { .sticky { position: static; order: -1; } }
+  @media (max-width: 900px) { .sticky { position: static; } }
+  @media (max-width: 600px) {
+    header { flex-wrap: wrap; gap: 10px; }
+    header .muted, header .grow { display: none; }
+    header > div:first-child { flex: 1 0 100%; }
+    .pill { white-space: nowrap; }
+  }
   form { display: flex; gap: 10px; margin-bottom: 16px; }
   input[type=search] { flex: 1; min-width: 0; background: var(--card2); color: var(--text); border: 1px solid var(--line);
                        border-radius: 10px; padding: 10px 12px; font: inherit; }
@@ -143,16 +149,20 @@ function tile(item) {
 }
 
 async function search(append) {
+  // Only the latest search may fill the grid: the trending list loaded at start-up
+  // must not land on top of a search typed before it arrived.
+  const ticket = (state.searchTicket = (state.searchTicket || 0) + 1);
   if (!append) { state.offset = 0; $("grid").replaceChildren(); }
   say($("listmsg"), "Loading…");
   try {
     const params = new URLSearchParams({ q: state.q, offset: state.offset });
     const data = await (await api("/giphy/api/search?" + params)).json();
+    if (ticket !== state.searchTicket) return;
     data.items.forEach((it) => $("grid").append(tile(it)));
     state.offset += data.items.length;
     $("more").hidden = !data.items.length || state.offset >= data.total;
     say($("listmsg"), data.items.length || append ? "" : "No GIFs found.");
-  } catch (e) { say($("listmsg"), e.message, "err"); }
+  } catch (e) { if (ticket === state.searchTicket) say($("listmsg"), e.message, "err"); }
 }
 
 function choose(item, el) {
@@ -160,6 +170,8 @@ function choose(item, el) {
   document.querySelectorAll(".tile.sel").forEach((t) => t.classList.remove("sel"));
   el.classList.add("sel");
   state.selected = item;
+  // On narrow screens the preview sits below the results: bring it into view.
+  if (window.matchMedia("(max-width: 900px)").matches) document.querySelector("aside").scrollIntoView({ behavior: "smooth" });
   prepare();
 }
 
